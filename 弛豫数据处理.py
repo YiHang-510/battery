@@ -37,7 +37,7 @@ if all_relaxation_segments:
 
     # 保存为 CSV
     csv_path = f'{base_path}\\Vrlx_full_segment.csv'
-    df_vrlx_all.to_csv(csv_path, index=False, encoding='utf-8')
+    df_vrlx_all.to_csv(csv_path, index=False, encoding='gbk')
 
     # 保存为 NPY（转为 dict 列表或结构化 numpy array）
     npy_path = f'{base_path}\\Vrlx_full_segment.npy'
@@ -51,6 +51,6 @@ else:
 # === 保存末端电压 CSV + NPY ===
 if EndVrlx:
     df_end = pd.DataFrame({'循环号': CycleIDs, '末端电压(V)': EndVrlx})
-    df_end.to_csv(f'{base_path}\\EndVrlx.csv', index=False, encoding='utf-8')
+    df_end.to_csv(f'{base_path}\\EndVrlx.csv', index=False, encoding='gbk')
     np.save(f'{base_path}\\EndVrlx.npy', EndVrlx)
     print(f"末端电压已保存为 CSV 和 NPY")
