@@ -26,7 +26,6 @@ class IMVTensorLSTM(torch.jit.ScriptModule):
         self.n_units = n_units
         self.input_dim = input_dim
 
-    @torch.jit.script_method
     def forward(self, x):
         h_tilda_t = torch.zeros(x.shape[0], self.input_dim, self.n_units).cuda()
         c_tilda_t = torch.zeros(x.shape[0], self.input_dim, self.n_units).cuda()
@@ -82,7 +81,6 @@ class IMVFullLSTM(torch.jit.ScriptModule):
         self.n_units = n_units
         self.input_dim = input_dim
 
-    @torch.jit.script_method
     def forward(self, x):
         h_tilda_t = torch.zeros(x.shape[0], self.input_dim, self.n_units).cuda()
         c_t = torch.zeros(x.shape[0], self.input_dim * self.n_units).cuda()
