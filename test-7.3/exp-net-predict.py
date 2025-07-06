@@ -9,11 +9,14 @@ import matplotlib.pyplot as plt
 import matplotlib
 import os
 import math
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from Model import IMVTensorLSTM  # 你的IMV-LSTM模型类
 from torch.utils.data import TensorDataset, DataLoader
 
 save_path = r'/home/scuee_user06/myh/电池/rusult'
 data_dir = r'/home/scuee_user06/myh/电池/data/cycle'
+result_save_dir = f"{save_path}/expnet_cell_result"
+os.makedirs(result_save_dir, exist_ok=True)
 matplotlib.use('Agg')
 
 def set_seed(seed=217):
@@ -62,8 +65,6 @@ train_soh_tensor = torch.tensor(train_soh, dtype=torch.float32, device=device)
 val_c_tensor = torch.tensor(val_c, dtype=torch.float32, device=device)
 val_soh_tensor = torch.tensor(val_soh, dtype=torch.float32, device=device)
 
-# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
-# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓经验指数网络↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 # 3. 初始化
 epochs = 4000
 learning_rate = 1e-2
@@ -71,7 +72,7 @@ learning_rate = 1e-2
 model = ExpNet(n_terms=1).to(device)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs+100)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs + 100)
 
 # 4. 训练
 train_losses, val_losses = [], []
@@ -92,7 +93,8 @@ for epoch in range(epochs):
     train_losses.append(loss.item())
     val_losses.append(val_loss)
     if epoch % 50 == 0 or epoch == epochs - 1:
-        print(f"Epoch {epoch:4d} | Train Loss: {loss.item():.6f} | Val Loss: {val_loss:.6f} | LR: {scheduler.get_last_lr()[0]:.6e}")
+        print(
+            f"Epoch {epoch:4d} | Train Loss: {loss.item():.6f} | Val Loss: {val_loss:.6f} | LR: {scheduler.get_last_lr()[0]:.6e}")
 
 # 5. 可视化 Loss 曲线
 plt.figure()
@@ -115,9 +117,11 @@ file_list = sorted([f for f in os.listdir(data_dir) if f.endswith('.csv')])
 file_num = len(all_cycles)
 fig_cols = 3
 fig_rows = math.ceil(file_num / fig_cols)
-plt.figure(figsize=(fig_cols*5, fig_rows*4))
+plt.figure(figsize=(fig_cols * 5, fig_rows * 4))
 
 val_indices = indices[split:]  # 验证集在打乱前的原始索引
+
+metrics_list = []
 
 start = 0
 for i, (file_cycles, file_capacity) in enumerate(zip(all_cycles, all_capacity)):
@@ -136,7 +140,31 @@ for i, (file_cycles, file_capacity) in enumerate(zip(all_cycles, all_capacity)):
     with torch.no_grad():
         val_pred = model(val_c_tensor).cpu().numpy()
 
-    ax = plt.subplot(fig_rows, fig_cols, i+1)
+    # 保存当前电池SOH预测结果
+    df = pd.DataFrame({
+        "cycle": val_cycles,
+        "true_soh": val_soh,
+        "pred_soh": val_pred.flatten()
+    })
+    out_name = os.path.splitext(file_list[i])[0] + "_soh_fit.csv"
+    df.to_csv(os.path.join(result_save_dir, out_name), index=False, encoding='utf-8-sig')
+
+    # 计算指标
+    mae = mean_absolute_error(val_soh, val_pred)
+    mse = mean_squared_error(val_soh, val_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(val_soh, val_pred)
+
+    # 保存单个电池的指标
+    metrics_list.append({
+        "cell_name": os.path.splitext(file_list[i])[0],
+        "MAE": mae,
+        "MSE": mse,
+        "RMSE": rmse,
+        "R2": r2
+    })
+
+    ax = plt.subplot(fig_rows, fig_cols, i + 1)
     ax.plot(val_cycles, val_soh, 'o', label='True SOH', alpha=0.7)
     ax.plot(val_cycles, val_pred, 'r.', label='Predicted SOH', alpha=0.7)
     ax.set_xlabel('Cycle Number')
@@ -145,19 +173,22 @@ for i, (file_cycles, file_capacity) in enumerate(zip(all_cycles, all_capacity)):
     ax.legend()
     start = end
 
+# 转为DataFrame
+metrics_df = pd.DataFrame(metrics_list)
+
+# 计算平均
+mean_row = metrics_df.mean(numeric_only=True)
+mean_row['cell_name'] = "Mean"
+metrics_df = pd.concat([metrics_df, pd.DataFrame([mean_row])], ignore_index=True)
+
+# 保存
+metrics_df.to_csv(f"{save_path}/soh_fit_metrics.csv", index=False, encoding='utf-8-sig')
+
 plt.tight_layout()
 plt.savefig(f'{save_path}/exp-SOH-val-eachfile.png', dpi=200, bbox_inches='tight')
 plt.close()
 print('验证集各文件SOH拟合输出完成')
-
 print('经验指数网络输出完成')
-# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑经验指数网络↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
-# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
-
-# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
-# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓多模态LSTM网络↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 
 
 
-# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑多模态LSTM网络↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
-# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
