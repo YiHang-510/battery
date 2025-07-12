@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 import random
 import os
 import matplotlib
+import json
+import optuna
 
 # 设置matplotlib以支持中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -70,14 +72,11 @@ class IMVTensorLSTM(nn.Module):
             outputs.append(h_tilda_t)
 
         outputs = torch.stack(outputs, dim=1)
-
         alphas = torch.tanh(torch.einsum("btij,ijk->btik", outputs, self.F_alpha_n) + self.F_alpha_n_b)
         alphas = torch.exp(alphas)
         alphas = alphas / torch.sum(alphas, dim=1, keepdim=True)
         g_n = torch.sum(alphas * outputs, dim=1)
-
         hg = torch.cat([g_n, h_tilda_t], dim=2)
-
         mu = self.Phi(hg)
         betas = torch.tanh(self.F_beta(hg))
         betas = torch.exp(betas)
@@ -105,53 +104,116 @@ class BatteryDataset(Dataset):
 def create_sliding_windows(data, window_size, step):
     X, y = [], []
     for i in range(0, len(data) - window_size, step):
-        X.append(data[i:i + window_size])
-        y.append(data[i + window_size, 0])
+        X.append(data[i:i+window_size, 1:]) # 特征不包含第一列的目标
+        y.append(data[i+window_size, 0])   # 目标是窗口末端下一个点的'最大容量(Ah)'
     return np.array(X), np.array(y)
 
 
-# --- 训练和评估函数 ---
-def train_model(model, train_loader, optimizer, criterion, scheduler, device):
-    model.train()
-    total_loss = 0
-    for features, targets in train_loader:
-        features, targets = features.to(device), targets.to(device)
+# --- 训练和评估函数 (修改后用于Optuna) ---
+def train_and_validate(model, train_loader, val_loader, optimizer, criterion, scheduler, device, trial, epochs):
+    """训练并返回在验证集上的最佳RMSE"""
+    best_val_rmse = float('inf')
 
-        optimizer.zero_grad()
-        predictions = model(features).squeeze(-1)
-        loss = criterion(predictions, targets)
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    scheduler.step()
-    return total_loss / len(train_loader)
-
-
-def evaluate_model(model, test_loader, device, scaler_y):
-    model.eval()
-    all_preds = []
-    all_targets = []
-    with torch.no_grad():
-        for features, targets in test_loader:
+    for epoch in range(epochs):
+        model.train()
+        for features, targets in train_loader:
             features, targets = features.to(device), targets.to(device)
+            optimizer.zero_grad()
             predictions = model(features).squeeze(-1)
-            all_preds.append(predictions.cpu().numpy())
-            all_targets.append(targets.cpu().numpy())
+            loss = criterion(predictions, targets)
+            loss.backward()
+            optimizer.step()
+        scheduler.step()
 
-    all_preds = np.concatenate(all_preds)
-    all_targets = np.concatenate(all_targets)
+        # 在验证集上评估
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for features, targets in val_loader:
+                features, targets = features.to(device), targets.to(device)
+                predictions = model(features).squeeze(-1)
+                val_loss += criterion(predictions, targets).item()
 
-    all_preds_rescaled = scaler_y.inverse_transform(all_preds.reshape(-1, 1))
-    all_targets_rescaled = scaler_y.inverse_transform(all_targets.reshape(-1, 1))
+        avg_val_loss = val_loss / len(val_loader)
+        current_val_rmse = np.sqrt(avg_val_loss)
 
-    mse = mean_squared_error(all_targets_rescaled, all_preds_rescaled)
-    rmse = np.sqrt(mse)
-    mae = mean_absolute_error(all_targets_rescaled, all_preds_rescaled)
-    r2 = r2_score(all_targets_rescaled, all_preds_rescaled)
+        if current_val_rmse < best_val_rmse:
+            best_val_rmse = current_val_rmse
 
-    return mse, rmse, mae, r2, all_preds_rescaled, all_targets_rescaled
+        # 向Optuna报告中间结果，用于剪枝
+        trial.report(current_val_rmse, epoch)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
+
+    return best_val_rmse
+
+
+# --- Optuna的目标函数 ---
+def objective(trial, full_data, feature_cols, target_col, device):
+    # 1. 定义超参数搜索空间
+    params = {
+        'window_size': trial.suggest_categorical('window_size', [10, 15, 20]),
+        'n_units': trial.suggest_categorical('n_units', [32, 64, 128]),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True),
+        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64]),
+    }
+
+    # 2. 准备数据 (每次试验都重新准备，因为window_size会变)
+    # 数据集划分: 60% 训练, 20% 验证, 20% 测试
+    all_battery_ids = sorted(full_data['电池编号'].unique())
+    train_end_idx = int(len(all_battery_ids) * 0.6)
+    val_end_idx = train_end_idx + int(len(all_battery_ids) * 0.2)
+
+    train_ids = all_battery_ids[:train_end_idx]
+    val_ids = all_battery_ids[train_end_idx:val_end_idx]
+
+    cols_for_scaling = [target_col] + feature_cols
+    data_to_process = full_data[cols_for_scaling]
+
+    train_val_raw = data_to_process[full_data['电池编号'].isin(train_ids + val_ids)]
+    scaler = MinMaxScaler()
+    scaler.fit(train_val_raw)  # 在训练+验证集上fit scaler
+
+    # 创建训练集
+    train_data_raw = data_to_process[full_data['电池编号'].isin(train_ids)]
+    train_data_scaled = scaler.transform(train_data_raw)
+    X_train, y_train = [], []
+    for battery_id in train_ids:
+        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
+        X_b, y_b = create_sliding_windows(battery_data_scaled, params['window_size'], 1)
+        if len(X_b) > 0:
+            X_train.append(X_b);
+            y_train.append(y_b)
+    X_train, y_train = np.concatenate(X_train), np.concatenate(y_train)
+    train_dataset = BatteryDataset(X_train, y_train)
+    train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True)
+
+    # 创建验证集
+    val_data_raw = data_to_process[full_data['电池编号'].isin(val_ids)]
+    val_data_scaled = scaler.transform(val_data_raw)
+    X_val, y_val = [], []
+    for battery_id in val_ids:
+        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
+        X_b, y_b = create_sliding_windows(battery_data_scaled, params['window_size'], 1)
+        if len(X_b) > 0:
+            X_val.append(X_b);
+            y_val.append(y_b)
+    X_val, y_val = np.concatenate(X_val), np.concatenate(y_val)
+    val_dataset = BatteryDataset(X_val, y_val)
+    val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=False)
+
+    # 3. 创建模型和优化器
+    input_dim = len(feature_cols)
+    model = IMVTensorLSTM(input_dim, 1, params['n_units']).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=params['learning_rate'])
+    criterion = nn.MSELoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)  # T_max可以设为固定值
+
+    # 4. 训练和验证
+    validation_rmse = train_and_validate(model, train_loader, val_loader, optimizer, criterion, scheduler, device,
+                                         trial, epochs=50)
+
+    return validation_rmse
 
 # --- 固定随机种子的函数 ---
 def set_seed(seed):
@@ -230,117 +292,172 @@ def prepare_data(full_data, feature_cols, target_col, window_size, step, train_r
 
 # --- 主程序 ---
 if __name__ == '__main__':
-    # --- 参数设置 ---
-    # !!! 控制开关: 'train_and_test', 'train', 'test' !!!
-    EXECUTION_MODE = 'train_and_test'
-    SEED = 217 # 随机种子
+    # --- 全局参数设置 ---
+    # !!! 控制开关: 'optimize_and_test', 'optimize_only', 'test_only' !!!
+    EXECUTION_MODE = 'optimize_and_test'
 
+    SEED = 217
+    N_TRIALS = 30   #optune寻优次数
+    EPOCHS_FINAL = 200     #训练轮次
+    PARAMS_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/best_hyperparameters.json'
     DATA_FILE = r'/home/scuee_user06/myh/电池/data/feature_results/all_batteries_data.csv'
     MODEL_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/imv_lstm_model.pth'
     METRICS_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/evaluation_metrics.csv'
     RESULT_DIR = r'/home/scuee_user06/myh/电池/data/result'
 
-    WINDOW_SIZE = 10
-    STEP = 1
-    N_UNITS = 64
-    LEARNING_RATE = 0.001
-    EPOCHS = 200
-    BATCH_SIZE = 32
-    TRAIN_RATIO = 0.7
-
+    set_seed(SEED)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"=============================================")
     print(f"执行模式: {EXECUTION_MODE}")
-    print(f"使用设备: {device}")
+    print(f"使用设备: {device}, 随机种子: {SEED}")
     print(f"=============================================")
 
-    if not os.path.exists(DATA_FILE):
-        raise FileNotFoundError(f"错误: 数据文件 '{DATA_FILE}' 未找到。")
-
     full_data = pd.read_csv(DATA_FILE, encoding='gbk')
-
-    feature_cols = [
-        'ICA峰值', 'ICA峰值位置(V)', '2.8~3.4V放电面积(Ah)',
-        '恒流充电时间(s)', '恒压充电时间(s)', '恒流与恒压时间比值',
-        '2.8~3.4V放电时间(s)', '3.3~3.6V充电时间(s)'
-    ]
+    feature_cols = ['ICA峰值', 'ICA峰值位置(V)', '2.8~3.4V放电面积(Ah)', '恒流充电时间(s)', '恒压充电时间(s)',
+                    '恒流与恒压时间比值', '2.8~3.4V放电时间(s)', '3.3~3.6V充电时间(s)']
     target_col = '最大容量(Ah)'
 
-    required_cols = ['电池编号', target_col] + feature_cols
-    for col in required_cols:
-        if col not in full_data.columns:
-            raise ValueError(f"错误: 数据文件中缺少必需的列: '{col}'")
+    best_params = {}
 
-    # --- 数据准备 ---
-    train_dataset, test_dataset, scaler_y, input_dim = prepare_data(
-        full_data, feature_cols, target_col, WINDOW_SIZE, STEP, TRAIN_RATIO
-    )
+    # --- 1. 寻优流程 ---
+    if EXECUTION_MODE in ['optimize_only', 'optimize_and_test']:
+        print("\n--- 开始Optuna超参数寻优 ---")
+        study = optuna.create_study(direction='minimize', pruner=optuna.pruners.MedianPruner())
+        study.optimize(lambda trial: objective(trial, full_data, feature_cols, target_col, device), n_trials=N_TRIALS)
 
-    # --- 初始化模型 ---
-    output_dim = 1
-    model = IMVTensorLSTM(input_dim=input_dim, output_dim=output_dim, n_units=N_UNITS).to(device)
+        best_params = study.best_params
+        print("\n寻优结束!")
+        print(f"最佳试验的验证集RMSE: {study.best_value:.6f}")
+        print("最佳超参数:")
+        for key, value in best_params.items():
+            print(f"  {key}: {value}")
 
-    # --- 训练流程 ---
-    if EXECUTION_MODE in ['train', 'train_and_test']:
-        print("\n--- 开始训练流程 ---")
-        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+        with open(PARAMS_SAVE_PATH, 'w') as f:
+            json.dump(best_params, f)
+        print(f"最佳参数已保存至: {PARAMS_SAVE_PATH}")
+
+        if EXECUTION_MODE == 'optimize_only':
+            print("\n'optimize_only' 模式完成。")
+            exit()
+
+    # --- 2. 最终训练与测试流程 ---
+    print("\n--- 开始最终训练与测试流程 ---")
+
+    # 在 'test_only' 模式下加载已保存的参数
+    if EXECUTION_MODE == 'test_only':
+        if not os.path.exists(PARAMS_SAVE_PATH):
+            raise FileNotFoundError(f"错误: 找不到参数文件 {PARAMS_SAVE_PATH}。请先运行 'optimize_and_test' 模式。")
+        with open(PARAMS_SAVE_PATH, 'r') as f:
+            best_params = json.load(f)
+        print(f"已从 {PARAMS_SAVE_PATH} 加载最佳参数。")
+
+    # 准备最终的数据集
+    all_battery_ids = sorted(full_data['电池编号'].unique())
+    train_val_end_idx = int(len(all_battery_ids) * 0.8)
+    train_val_ids = all_battery_ids[:train_val_end_idx]
+    test_ids = all_battery_ids[train_val_end_idx:]
+
+    print(f"\n最终训练集 (train+val) 电池ID: {train_val_ids}")
+    print(f"最终测试集 电池ID: {test_ids}")
+
+    cols_for_scaling = [target_col] + feature_cols
+    data_to_process = full_data[cols_for_scaling]
+    train_val_raw = data_to_process[full_data['电池编号'].isin(train_val_ids)]
+    scaler = MinMaxScaler().fit(train_val_raw)
+    scaler_y = MinMaxScaler().fit(train_val_raw[[target_col]])
+
+    # 创建最终模型
+    final_model = IMVTensorLSTM(len(feature_cols), 1, best_params['n_units']).to(device)
+
+    # 训练或加载最终模型
+    if EXECUTION_MODE == 'optimize_and_test':
+        print("\n--- 使用最佳参数训练最终模型 ---")
+        X_train_final, y_train_final = [], []
+        for battery_id in train_val_ids:
+            battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
+            X_b, y_b = create_sliding_windows(battery_data_scaled, best_params['window_size'], 1)
+            if len(X_b) > 0:
+                X_train_final.append(X_b);
+                y_train_final.append(y_b)
+        X_train_final, y_train_final = np.concatenate(X_train_final), np.concatenate(y_train_final)
+        final_train_loader = DataLoader(BatteryDataset(X_train_final, y_train_final),
+                                        batch_size=best_params['batch_size'], shuffle=True)
+
+        optimizer = torch.optim.AdamW(final_model.parameters(), lr=best_params['learning_rate'])
         criterion = nn.MSELoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS_FINAL)
 
-        for epoch in range(EPOCHS):
-            train_loss = train_model(model, train_loader, optimizer, criterion, scheduler, device)
-            print(f"Epoch {epoch + 1}/{EPOCHS}, 训练损失: {train_loss:.6f}, 学习率: {scheduler.get_last_lr()[0]:.6f}")
+        for epoch in range(EPOCHS_FINAL):
+            final_model.train()
+            epoch_loss = 0
+            for features, targets in final_train_loader:
+                features, targets = features.to(device), targets.to(device)
+                optimizer.zero_grad()
+                predictions = final_model(features).squeeze(-1)
+                loss = criterion(predictions, targets)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            scheduler.step()
+            if (epoch + 1) % 10 == 0:
+                print(
+                    f"最终模型训练中... Epoch {epoch + 1}/{EPOCHS_FINAL}, Loss: {epoch_loss / len(final_train_loader):.6f}")
 
-        print("\n训练完成!")
+        torch.save(final_model.state_dict(), MODEL_SAVE_PATH)
+        print(f"\n最佳模型已保存至: {MODEL_SAVE_PATH}")
 
-        torch.save(model.state_dict(), MODEL_SAVE_PATH)
-        print(f"模型已保存至: {MODEL_SAVE_PATH}")
+    elif EXECUTION_MODE == 'test_only':
+        if not os.path.exists(MODEL_SAVE_PATH):
+            raise FileNotFoundError(f"错误: 找不到模型文件 {MODEL_SAVE_PATH}。请先运行 'optimize_and_test' 模式。")
+        final_model.load_state_dict(torch.load(MODEL_SAVE_PATH, map_location=device))
+        print(f"\n已从 {MODEL_SAVE_PATH} 加载最终模型。")
 
-    # --- 测试流程 ---
-    if EXECUTION_MODE in ['test', 'train_and_test']:
-        print("\n--- 开始测试流程 ---")
+    # --- 3. 在测试集上评估最终模型 ---
+    print("\n--- 在独立测试集上评估最终模型 ---")
+    X_test_final, y_test_final = [], []
+    for battery_id in test_ids:
+        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
+        X_b, y_b = create_sliding_windows(battery_data_scaled, best_params['window_size'], 1)
+        if len(X_b) > 0:
+            X_test_final.append(X_b);
+            y_test_final.append(y_b)
+    X_test_final, y_test_final = np.concatenate(X_test_final), np.concatenate(y_test_final)
+    final_test_loader = DataLoader(BatteryDataset(X_test_final, y_test_final), batch_size=best_params['batch_size'],
+                                   shuffle=False)
 
-        if EXECUTION_MODE == 'test':
-            if not os.path.exists(MODEL_SAVE_PATH):
-                raise FileNotFoundError(
-                    f"错误: 模型文件 '{MODEL_SAVE_PATH}' 未找到。请先运行 'train' 或 'train_and_test' 模式。")
-            model.load_state_dict(torch.load(MODEL_SAVE_PATH, map_location=device))
-            print(f"已从 '{MODEL_SAVE_PATH}' 加载模型。")
+    final_model.eval()
+    all_preds, all_targets = [], []
+    with torch.no_grad():
+        for features, targets in final_test_loader:
+            features, targets = features.to(device), targets.to(device)
+            all_preds.append(final_model(features).squeeze(-1).cpu().numpy())
+            all_targets.append(targets.cpu().numpy())
 
-        test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    predictions = scaler_y.inverse_transform(np.concatenate(all_preds).reshape(-1, 1))
+    targets = scaler_y.inverse_transform(np.concatenate(all_targets).reshape(-1, 1))
 
-        print("\n开始评估...")
-        mse, rmse, mae, r2, predictions, targets = evaluate_model(model, test_loader, device, scaler_y)
+    mse, rmse, mae, r2 = mean_squared_error(targets, predictions), np.sqrt(
+        mean_squared_error(targets, predictions)), mean_absolute_error(targets, predictions), r2_score(targets,
+                                                                                                       predictions)
 
-        print("\n--- 评估结果 ---")
-        print(f"MSE (均方误差):      {mse:.6f}")
-        print(f"RMSE (均方根误差):   {rmse:.6f}")
-        print(f"MAE (平均绝对误差):  {mae:.6f}")
-        print(f"R² (R-squared):      {r2:.6f}")
-        print("--------------------")
+    print("\n--- 最终评估结果 ---")
+    print(f"MSE (均方误差):      {mse:.6f}")
+    print(f"RMSE (均方根误差):   {rmse:.6f}")
+    print(f"MAE (平均绝对误差):  {mae:.6f}")
+    print(f"R² (R-squared):      {r2:.6f}")
 
-        metrics_df = pd.DataFrame({
-            'Metric': ['MSE', 'RMSE', 'MAE', 'R2'],
-            'Value': [mse, rmse, mae, r2]
-        })
-        metrics_df.to_csv(METRICS_SAVE_PATH, index=False)
-        print(f"评估指标已保存至: {METRICS_SAVE_PATH}")
+    pd.DataFrame({'Metric': ['MSE', 'RMSE', 'MAE', 'R2'], 'Value': [mse, rmse, mae, r2]}).to_csv(METRICS_SAVE_PATH,
+                                                                                                 index=False)
+    print(f"最终评估指标已保存至: {METRICS_SAVE_PATH}")
 
-        plt.figure(figsize=(14, 7))
-        plt.plot(targets, label='Actual SOH', color='blue', marker='o', linestyle='-', markersize=4)
-        plt.plot(predictions, label='Predicted SOH', color='red', marker='x', linestyle='--', markersize=4)
-        plt.title('SOH predict result', fontsize=16)
-        plt.xlabel('Test Sample Point', fontsize=12)
-        plt.ylabel('max capacity (Ah)', fontsize=12)
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(RESULT_DIR, '电池SOH预测结果对比.png'), dpi=300)
-        plt.show()
-
-    # --- 流程结束检查 ---
-    if EXECUTION_MODE == 'train':
-        print("\n'train' 模式已完成。模型已保存，未执行评估。")
-    elif EXECUTION_MODE not in ['train', 'test', 'train_and_test']:
-        raise ValueError(f"无效的 EXECUTION_MODE: '{EXECUTION_MODE}'. 请选择 'train', 'test', 或 'train_and_test'.")
+    plt.figure(figsize=(14, 7))
+    plt.plot(targets, label='Actual SOH', color='blue', marker='o', linestyle='-', markersize=4)
+    plt.plot(predictions, label='Predicted SOH', color='red', marker='x', linestyle='--', markersize=4)
+    plt.title('predict result in test dataset', fontsize=16)
+    plt.xlabel('Test Sample Point', fontsize=12)
+    plt.ylabel('max capacity (Ah)', fontsize=12)
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(RESULT_DIR, '测试集结果'))
+    plt.show()
 
