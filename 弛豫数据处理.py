@@ -3,7 +3,7 @@ import numpy as np
 import os
 
 # === 参数设置 ===
-for i in range(1,25):
+for i in range(2,25):
     # i = 24
     base_path = f'D:\\任务归档\\电池\\研究\\data\\selected_data\\battery{i}'
     file_path = f'{base_path}\\battery{i}_record.csv'
@@ -34,11 +34,17 @@ for i in range(1,25):
 
     # === 合并 & 保存 CSV + NPY ===
     if all_relaxation_segments:
-        df_vrlx_all = pd.concat(all_relaxation_segments, ignore_index=True)
+        # 构建宽格式，每列是一个循环号的1200个电压值
+        wide_df = pd.DataFrame()
+
+        for idx, segment in enumerate(all_relaxation_segments):
+            cycle_id = CycleIDs[idx]
+            voltage_series = segment['电压(V)'].reset_index(drop=True)
+            wide_df[f'Cycle_{cycle_id}'] = voltage_series
 
         # 保存为 CSV
-        csv_path = f'D:\\任务归档\\电池\\研究\\data\\relaxation\\relaxation_battery{i}.csv'
-        df_vrlx_all.to_csv(csv_path, index=False, encoding='gbk')
+        csv_path = f'D:\\任务归档\\电池\\研究\\data\\selected_feature\\relaxation\\Interval\\转置前\\relaxation_battery{i}.csv'
+        wide_df.to_csv(csv_path, index=False, encoding='gbk')
         print(f"完整数据已保存为 CSV: {csv_path}")
     else:
         print("未提取到任何符合条件的弛豫时段。")
@@ -46,7 +52,7 @@ for i in range(1,25):
     # === 保存末端电压 CSV ===
     if EndVrlx:
         df_end = pd.DataFrame({'循环号': CycleIDs, '末端电压(V)': EndVrlx})
-        df_end.to_csv(f'D:\\任务归档\\电池\\研究\\data\\relaxation\\EndVrlx_battery{i}.csv', index=False, encoding='gbk')
+        df_end.to_csv(f'D:\\任务归档\\电池\\研究\\data\\selected_feature\\relaxation\\End\\EndVrlx_battery{i}.csv', index=False, encoding='gbk')
         # np.save(f'{base_path}\\EndVrlx.npy', EndVrlx)
         print(f"末端电压已保存为 ")
 

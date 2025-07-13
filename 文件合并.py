@@ -5,16 +5,16 @@ import re
 # --- 用户需要修改的设置 ---
 # 请将您的24个CSV文件所在的文件夹路径替换到下面的引号中
 
-# folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\End'  # 使用 "./" 表示当前脚本所在的文件夹
-#
-# # 合并后输出的文件名
-# output_filename = r"D:\任务归档\电池\研究\data\selected_feature\relaxation\End\EndVrlx_data_all_battery.csv"
-
-#
-folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\interval'  # 使用 "./" 表示当前脚本所在的文件夹
+folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\End'  # 使用 "./" 表示当前脚本所在的文件夹
 
 # 合并后输出的文件名
-output_filename = r"D:\任务归档\电池\研究\data\selected_feature\relaxation\interval\relaxation_interval_all_battery.csv"
+output_filename = r"D:\任务归档\电池\研究\data\selected_feature\relaxation\End\EndVrlx_data_all_battery.csv"
+
+# #
+# folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval'  # 使用 "./" 表示当前脚本所在的文件夹
+#
+# # 合并后输出的文件名
+# output_filename = r"D:\任务归档\电池\研究\data\selected_feature\relaxation\interval\relaxation_interval_all_battery.csv"
 
 # --- 设置结束 ---
 
@@ -47,7 +47,7 @@ def combine_battery_data(path, output_file):
     all_dataframes = []
 
     # 定义需要从每个文件中提取的列
-    columns_to_extract = ['循环号', '弛豫段电压']
+    columns_to_extract = ['循环号', '弛豫末端电压']
 
     # 遍历所有找到的CSV文件
     for file in csv_files:
