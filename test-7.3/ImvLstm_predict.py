@@ -1,463 +1,481 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+import os
+import random
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
-import random
-import os
-import matplotlib
-import json
-import optuna
-
-# 设置matplotlib以支持中文显示
-plt.rcParams['font.sans-serif'] = ['SimHei']
-plt.rcParams['axes.unicode_minus'] = False
-matplotlib.use('Agg')
-
-# --- 模型定义 ---
-class IMVTensorLSTM(nn.Module):
-    def __init__(self, input_dim, output_dim, n_units, init_std=0.02):
-        super(IMVTensorLSTM, self).__init__()
-        self.input_dim = input_dim
-        self.n_units = n_units
-        self.output_dim = output_dim
-
-        # LSTM-like gates
-        self.U_j = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
-        self.U_i = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
-        self.U_f = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
-        self.U_o = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
-        self.W_j = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
-        self.W_i = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
-        self.W_f = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
-        self.W_o = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
-        self.b_j = nn.Parameter(torch.zeros(input_dim, n_units))
-        self.b_i = nn.Parameter(torch.zeros(input_dim, n_units))
-        self.b_f = nn.Parameter(torch.zeros(input_dim, n_units))
-        self.b_o = nn.Parameter(torch.zeros(input_dim, n_units))
-
-        # Attention mechanisms
-        self.F_alpha_n = nn.Parameter(torch.randn(input_dim, n_units, 1) * init_std)
-        self.F_alpha_n_b = nn.Parameter(torch.zeros(input_dim, 1))
-        self.F_beta = nn.Linear(2 * n_units, 1)
-        self.Phi = nn.Linear(2 * n_units, output_dim)
-
-    def forward(self, x):
-        device = x.device
-        batch_size = x.shape[0]
-        seq_len = x.shape[1]
-
-        h_tilda_t = torch.zeros(batch_size, self.input_dim, self.n_units, device=device)
-        c_tilda_t = torch.zeros(batch_size, self.input_dim, self.n_units, device=device)
-
-        outputs = []
-        for t in range(seq_len):
-            xt_t = x[:, t, :].unsqueeze(1)
-
-            j_tilda_t = torch.tanh(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_j) + \
-                                   torch.einsum("bij,jik->bjk", xt_t, self.U_j) + self.b_j)
-            i_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_i) + \
-                                      torch.einsum("bij,jik->bjk", xt_t, self.U_i) + self.b_i)
-            f_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_f) + \
-                                      torch.einsum("bij,jik->bjk", xt_t, self.U_f) + self.b_f)
-            o_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_o) + \
-                                      torch.einsum("bij,jik->bjk", xt_t, self.U_o) + self.b_o)
-
-            c_tilda_t = c_tilda_t * f_tilda_t + i_tilda_t * j_tilda_t
-            h_tilda_t = o_tilda_t * torch.tanh(c_tilda_t)
-
-            outputs.append(h_tilda_t)
-
-        outputs = torch.stack(outputs, dim=1)
-        alphas = torch.tanh(torch.einsum("btij,ijk->btik", outputs, self.F_alpha_n) + self.F_alpha_n_b)
-        alphas = torch.exp(alphas)
-        alphas = alphas / torch.sum(alphas, dim=1, keepdim=True)
-        g_n = torch.sum(alphas * outputs, dim=1)
-        hg = torch.cat([g_n, h_tilda_t], dim=2)
-        mu = self.Phi(hg)
-        betas = torch.tanh(self.F_beta(hg))
-        betas = torch.exp(betas)
-        betas = betas / torch.sum(betas, dim=1, keepdim=True)
-
-        mean = torch.sum(betas * mu, dim=1)
-
-        return mean
+import warnings
+import joblib
+from torch.cuda.amp import autocast, GradScaler
 
 
-# --- 数据集创建与预处理 ---
-class BatteryDataset(Dataset):
-    def __init__(self, features, targets):
-        self.features = features
-        self.targets = targets
-
-    def __len__(self):
-        return len(self.features)
-
-    def __getitem__(self, idx):
-        return torch.tensor(self.features[idx], dtype=torch.float32), torch.tensor(self.targets[idx],
-                                                                                   dtype=torch.float32)
+# 忽略一些不必要的警告
+warnings.filterwarnings('ignore')
 
 
-def create_sliding_windows(data, window_size, step):
-    X, y = [], []
-    for i in range(0, len(data) - window_size, step):
-        X.append(data[i:i+window_size, 1:]) # 特征不包含第一列的目标
-        y.append(data[i+window_size, 0])   # 目标是窗口末端下一个点的'最大容量(Ah)'
-    return np.array(X), np.array(y)
+# --- 1. 配置参数  ---
+class Config:
+    def __init__(self):
+        # --- 数据和路径设置 ---
+        self.data_path = '/home/scuee_user06/myh/电池/data/selected_feature/test'  # 存放24个电池CSV数据的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result'  # 保存模型、结果和图像的文件夹路径
+
+        # --- 数据集划分 ---
+        # 这里手动分配电池编号
+        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 13, 14, 15, 16, 19, 20, 21, 22]
+        # self.val_batteries = [5, 11, 17, 23]
+        # self.test_batteries = [6, 12, 18, 24]
+        self.train_batteries = [1]
+        self.val_batteries = [5]
+        self.test_batteries = [6]
+
+        # --- 模型超参数 ---
+        self.model_type = 'mlp'  # 模型类型: 'linear' 或 'mlp'
+        self.seq_len = 10  # 输入序列长度 (用前10个循环的数据预测下一个)
+        self.pred_len = 1  # 预测序列长度 (预测未来1个循环)
+        self.enc_in = 11  # 输入特征维度 (根据您的数据列)
+        self.d_model = 128  # MLP模型的隐藏层维度
+        self.cycle = 1200  # 最大循环次数
+        self.use_revin = False  # 是否使用可逆实例归一化 (Reversible Instance Normalization)
+
+        # --- 训练参数 ---
+        self.epochs = 10
+        self.batch_size = 2048
+        self.learning_rate = 0.01
+        self.patience = 10  # Early stopping的耐心值
+        self.seed = 2025  # 固定随机种子
+        self.mode = 'validate'  # 可选 'train', 'validate', 'both'
+
+        # --- 设备设置 ---
+        self.use_gpu = True
+        self.device = torch.device("cuda" if self.use_gpu and torch.cuda.is_available() else "cpu")
 
 
-# --- 训练和评估函数 (修改后用于Optuna) ---
-def train_and_validate(model, train_loader, val_loader, optimizer, criterion, scheduler, device, trial, epochs):
-    """训练并返回在验证集上的最佳RMSE"""
-    best_val_rmse = float('inf')
-
-    for epoch in range(epochs):
-        model.train()
-        for features, targets in train_loader:
-            features, targets = features.to(device), targets.to(device)
-            optimizer.zero_grad()
-            predictions = model(features).squeeze(-1)
-            loss = criterion(predictions, targets)
-            loss.backward()
-            optimizer.step()
-        scheduler.step()
-
-        # 在验证集上评估
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for features, targets in val_loader:
-                features, targets = features.to(device), targets.to(device)
-                predictions = model(features).squeeze(-1)
-                val_loss += criterion(predictions, targets).item()
-
-        avg_val_loss = val_loss / len(val_loader)
-        current_val_rmse = np.sqrt(avg_val_loss)
-
-        if current_val_rmse < best_val_rmse:
-            best_val_rmse = current_val_rmse
-
-        # 向Optuna报告中间结果，用于剪枝
-        trial.report(current_val_rmse, epoch)
-        if trial.should_prune():
-            raise optuna.TrialPruned()
-
-    return best_val_rmse
-
-
-# --- Optuna的目标函数 ---
-def objective(trial, full_data, feature_cols, target_col, device):
-    # 1. 定义超参数搜索空间
-    params = {
-        'window_size': trial.suggest_categorical('window_size', [10, 15, 20]),
-        'n_units': trial.suggest_categorical('n_units', [32, 64, 128]),
-        'learning_rate': trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True),
-        'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64]),
-    }
-
-    # 2. 准备数据 (每次试验都重新准备，因为window_size会变)
-    # 数据集划分: 60% 训练, 20% 验证, 20% 测试
-    all_battery_ids = sorted(full_data['电池编号'].unique())
-    train_end_idx = int(len(all_battery_ids) * 0.6)
-    val_end_idx = train_end_idx + int(len(all_battery_ids) * 0.2)
-
-    train_ids = all_battery_ids[:train_end_idx]
-    val_ids = all_battery_ids[train_end_idx:val_end_idx]
-
-    cols_for_scaling = [target_col] + feature_cols
-    data_to_process = full_data[cols_for_scaling]
-
-    train_val_raw = data_to_process[full_data['电池编号'].isin(train_ids + val_ids)]
-    scaler = MinMaxScaler()
-    scaler.fit(train_val_raw)  # 在训练+验证集上fit scaler
-
-    # 创建训练集
-    train_data_raw = data_to_process[full_data['电池编号'].isin(train_ids)]
-    train_data_scaled = scaler.transform(train_data_raw)
-    X_train, y_train = [], []
-    for battery_id in train_ids:
-        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
-        X_b, y_b = create_sliding_windows(battery_data_scaled, params['window_size'], 1)
-        if len(X_b) > 0:
-            X_train.append(X_b);
-            y_train.append(y_b)
-    X_train, y_train = np.concatenate(X_train), np.concatenate(y_train)
-    train_dataset = BatteryDataset(X_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=params['batch_size'], shuffle=True)
-
-    # 创建验证集
-    val_data_raw = data_to_process[full_data['电池编号'].isin(val_ids)]
-    val_data_scaled = scaler.transform(val_data_raw)
-    X_val, y_val = [], []
-    for battery_id in val_ids:
-        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
-        X_b, y_b = create_sliding_windows(battery_data_scaled, params['window_size'], 1)
-        if len(X_b) > 0:
-            X_val.append(X_b);
-            y_val.append(y_b)
-    X_val, y_val = np.concatenate(X_val), np.concatenate(y_val)
-    val_dataset = BatteryDataset(X_val, y_val)
-    val_loader = DataLoader(val_dataset, batch_size=params['batch_size'], shuffle=False)
-
-    # 3. 创建模型和优化器
-    input_dim = len(feature_cols)
-    model = IMVTensorLSTM(input_dim, 1, params['n_units']).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=params['learning_rate'])
-    criterion = nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)  # T_max可以设为固定值
-
-    # 4. 训练和验证
-    validation_rmse = train_and_validate(model, train_loader, val_loader, optimizer, criterion, scheduler, device,
-                                         trial, epochs=50)
-
-    return validation_rmse
-
-# --- 固定随机种子的函数 ---
+# --- 2. 固定随机种子 ---
 def set_seed(seed):
     """设置随机种子以确保结果可复现"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    # 确保cuDNN的确定性，可能会牺牲一些性能
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-# --- 数据准备函数 ---
-def prepare_data(full_data, feature_cols, target_col, window_size, step, train_ratio):
-    cols_for_scaling = [target_col] + feature_cols
-    data_to_process = full_data[cols_for_scaling]
-
-    all_battery_ids = full_data['电池编号'].unique()
-    all_battery_ids.sort()
-
-    train_size = int(len(all_battery_ids) * train_ratio)
-    train_battery_ids = all_battery_ids[:train_size]
-    test_battery_ids = all_battery_ids[train_size:]
-
-    print(f"\n总共 {len(all_battery_ids)} 个电池。")
-    print(f"训练电池编号 ({len(train_battery_ids)}个): {train_battery_ids}")
-    print(f"测试电池编号 ({len(test_battery_ids)}个): {test_battery_ids}")
-
-    train_data_raw = data_to_process[full_data['电池编号'].isin(train_battery_ids)]
-    test_data_raw = data_to_process[full_data['电池编号'].isin(test_battery_ids)]
-
-    scaler = MinMaxScaler()
-    train_data_scaled = scaler.fit_transform(train_data_raw)
-    test_data_scaled = scaler.transform(test_data_raw)
-
-    scaler_y = MinMaxScaler()
-    scaler_y.fit(train_data_raw[[target_col]])
-
-    X_train, y_train = [], []
-    train_data_scaled_df = pd.DataFrame(train_data_scaled, columns=cols_for_scaling, index=train_data_raw.index)
-    train_data_scaled_df['电池编号'] = full_data.loc[train_data_raw.index, '电池编号']
-
-    for battery_id in train_battery_ids:
-        battery_data = train_data_scaled_df[train_data_scaled_df['电池编号'] == battery_id][cols_for_scaling].values
-        X_b, y_b = create_sliding_windows(battery_data, window_size, step)
-        if len(X_b) > 0:
-            X_train.append(X_b)
-            y_train.append(y_b)
-
-    X_train = np.concatenate(X_train, axis=0)
-    y_train = np.concatenate(y_train, axis=0)
-
-    X_test, y_test = [], []
-    test_data_scaled_df = pd.DataFrame(test_data_scaled, columns=cols_for_scaling, index=test_data_raw.index)
-    test_data_scaled_df['电池编号'] = full_data.loc[test_data_raw.index, '电池编号']
-
-    for battery_id in test_battery_ids:
-        battery_data = test_data_scaled_df[test_data_scaled_df['电池编号'] == battery_id][cols_for_scaling].values
-        X_b, y_b = create_sliding_windows(battery_data, window_size, step)
-        if len(X_b) > 0:
-            X_test.append(X_b)
-            y_test.append(y_b)
-
-    X_test = np.concatenate(X_test, axis=0)
-    y_test = np.concatenate(y_test, axis=0)
-
-    X_train_features = X_train[:, :, 1:]
-    X_test_features = X_test[:, :, 1:]
-
-    train_dataset = BatteryDataset(X_train_features, y_train)
-    test_dataset = BatteryDataset(X_test_features, y_test)
-
-    return train_dataset, test_dataset, scaler_y, X_train_features.shape[2]
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
-# --- 主程序 ---
-if __name__ == '__main__':
-    # --- 全局参数设置 ---
-    # !!! 控制开关: 'optimize_and_test', 'optimize_only', 'test_only' !!!
-    EXECUTION_MODE = 'optimize_and_test'
+# --- 3. CycleNet 模型定义 (来自用户提供的 CycleNet.py) ---
+class RecurrentCycle(torch.nn.Module):
+    def __init__(self, cycle_len, channel_size):
+        super(RecurrentCycle, self).__init__()
+        self.cycle_len = cycle_len
+        self.channel_size = channel_size
+        self.data = torch.nn.Parameter(torch.zeros(cycle_len, channel_size), requires_grad=True)
 
-    SEED = 217
-    N_TRIALS = 30   #optune寻优次数
-    EPOCHS_FINAL = 200     #训练轮次
-    PARAMS_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/best_hyperparameters.json'
-    DATA_FILE = r'/home/scuee_user06/myh/电池/data/feature_results/all_batteries_data.csv'
-    MODEL_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/imv_lstm_model.pth'
-    METRICS_SAVE_PATH = r'/home/scuee_user06/myh/电池/data/result/evaluation_metrics.csv'
-    RESULT_DIR = r'/home/scuee_user06/myh/电池/data/result'
+    def forward(self, index, length):
+        gather_index = (index.view(-1, 1) + torch.arange(length, device=index.device).view(1, -1)) % self.cycle_len
+        return self.data[gather_index]
 
-    set_seed(SEED)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"=============================================")
-    print(f"执行模式: {EXECUTION_MODE}")
-    print(f"使用设备: {device}, 随机种子: {SEED}")
-    print(f"=============================================")
 
-    full_data = pd.read_csv(DATA_FILE, encoding='gbk')
-    feature_cols = ['ICA峰值', 'ICA峰值位置(V)', '2.8~3.4V放电面积(Ah)', '恒流充电时间(s)', '恒压充电时间(s)',
-                    '恒流与恒压时间比值', '2.8~3.4V放电时间(s)', '3.3~3.6V充电时间(s)']
+class Model(nn.Module):
+    def __init__(self, configs):
+        super(Model, self).__init__()
+        self.seq_len = configs.seq_len
+        self.pred_len = configs.pred_len
+        self.enc_in = configs.enc_in
+        self.cycle_len = configs.cycle
+        self.model_type = configs.model_type
+        self.d_model = configs.d_model
+        self.use_revin = configs.use_revin
+        self.cycleQueue = RecurrentCycle(cycle_len=self.cycle_len, channel_size=self.enc_in)
+
+        assert self.model_type in ['linear', 'mlp']
+        if self.model_type == 'linear':
+            self.model = nn.Linear(self.seq_len, self.pred_len)
+        elif self.model_type == 'mlp':
+            self.model = nn.Sequential(
+                nn.Linear(self.seq_len, self.d_model),
+                nn.ReLU(),
+                nn.Linear(self.d_model, self.pred_len)
+            )
+
+    def forward(self, x, cycle_index):
+        # x: (batch_size, seq_len, enc_in), cycle_index: (batch_size,)
+        if self.use_revin:
+            seq_mean = torch.mean(x, dim=1, keepdim=True)
+            seq_var = torch.var(x, dim=1, keepdim=True) + 1e-5
+            x = (x - seq_mean) / torch.sqrt(seq_var)
+
+        x = x - self.cycleQueue(cycle_index, self.seq_len)
+        y = self.model(x.permute(0, 2, 1)).permute(0, 2, 1)
+        y = y + self.cycleQueue((cycle_index + self.seq_len) % self.cycle_len, self.pred_len)
+
+        if self.use_revin:
+            y = y * torch.sqrt(seq_var) + seq_mean
+        return y
+
+
+# --- 4. 数据集定义 ---
+# 加载csv
+class BatteryDataset(Dataset):
+    def __init__(self, data, feature_cols, target_col, seq_len, pred_len):
+        # 重置索引
+        data = data.reset_index(drop=True)
+
+        self.feature_cols = feature_cols
+        self.target_col = target_col
+        self.seq_len = seq_len
+        self.pred_len = pred_len
+
+        self.features = data[self.feature_cols].values
+        self.target = data[self.target_col].values
+        self.cycle_index = data['循环号'].values
+
+        # 创建一个索引映射，以防止序列跨越不同的电池
+        self.indices = []
+        for battery_id in data['battery_id'].unique():
+            battery_indices = data[data['battery_id'] == battery_id].index
+            start = battery_indices[0]
+            end = battery_indices[-1]
+            # 确保有足够的长度来创建至少一个序列
+            if len(battery_indices) >= seq_len + pred_len:
+                # `i` 是序列的起始点在全局DataFrame中的索引
+                for i in range(start, end - seq_len - pred_len + 2):
+                    self.indices.append(i)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        start_idx = self.indices[idx]
+        end_idx = start_idx + self.seq_len
+        pred_start_idx = end_idx + self.pred_len - 1
+
+        x = self.features[start_idx:end_idx]
+        y = self.target[pred_start_idx: pred_start_idx + 1]  # 预测单个值
+        cycle_idx = self.cycle_index[start_idx]
+
+        return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32), torch.tensor(cycle_idx,
+                                                                                                        dtype=torch.long)
+
+# --- 5. 数据加载和预处理 ---
+# 加载CSV
+def load_and_preprocess_data(config):
+    """加载所有电池数据，进行预处理和划分"""
+    all_files = [f for f in os.listdir(config.data_path) if f.endswith('.csv')]
+    if not all_files:
+        raise FileNotFoundError(f"在 '{config.data_path}' 文件夹中没有找到任何 .csv 文件。")
+
+    df_list = []
+    for file in all_files:
+        try:
+            battery_id = int(''.join(filter(str.isdigit, file)))
+            file_path = os.path.join(config.data_path, file)
+            # 假设列是用制表符分隔的
+            df = pd.read_csv(file_path, sep=',', encoding='gbk')
+            df['battery_id'] = battery_id
+            df_list.append(df)
+        except Exception as e:
+            print(f"读取或处理文件 {file} 时出错: {e}")
+            continue
+
+    if not df_list:
+        raise ValueError("未能成功加载任何电池数据。")
+
+    full_df = pd.concat(df_list, ignore_index=True)
+
+    # 定义特征和目标
+    feature_cols = [col for col in full_df.columns if col not in ['最大容量(Ah)', 'battery_id', '电池编号']]
+    # 确保'循环号'在特征列中
+    if '循环号' not in feature_cols:
+        feature_cols.insert(0, '循环号')
+    config.enc_in = len(feature_cols)  # 更新特征数量
+
     target_col = '最大容量(Ah)'
 
-    best_params = {}
+    # 划分数据集
+    train_df = full_df[full_df['battery_id'].isin(config.train_batteries)]
+    val_df = full_df[full_df['battery_id'].isin(config.val_batteries)]
+    test_df = full_df[full_df['battery_id'].isin(config.test_batteries)]
 
-    # --- 1. 寻优流程 ---
-    if EXECUTION_MODE in ['optimize_only', 'optimize_and_test']:
-        print("\n--- 开始Optuna超参数寻优 ---")
-        study = optuna.create_study(direction='minimize', pruner=optuna.pruners.MedianPruner())
-        study.optimize(lambda trial: objective(trial, full_data, feature_cols, target_col, device), n_trials=N_TRIALS)
+    # 特征缩放
+    scaler = StandardScaler()
+    train_df.loc[:, feature_cols] = scaler.fit_transform(train_df[feature_cols])
+    val_df.loc[:, feature_cols] = scaler.transform(val_df[feature_cols])
+    test_df.loc[:, feature_cols] = scaler.transform(test_df[feature_cols])
 
-        best_params = study.best_params
-        print("\n寻优结束!")
-        print(f"最佳试验的验证集RMSE: {study.best_value:.6f}")
-        print("最佳超参数:")
-        for key, value in best_params.items():
-            print(f"  {key}: {value}")
+    # 创建Dataset
+    train_dataset = BatteryDataset(train_df, feature_cols, target_col, config.seq_len, config.pred_len)
+    val_dataset = BatteryDataset(val_df, feature_cols, target_col, config.seq_len, config.pred_len)
+    test_dataset = BatteryDataset(test_df, feature_cols, target_col, config.seq_len, config.pred_len)
 
-        with open(PARAMS_SAVE_PATH, 'w') as f:
-            json.dump(best_params, f)
-        print(f"最佳参数已保存至: {PARAMS_SAVE_PATH}")
+    return train_dataset, val_dataset, test_dataset, scaler, feature_cols
 
-        if EXECUTION_MODE == 'optimize_only':
-            print("\n'optimize_only' 模式完成。")
-            exit()
 
-    # --- 2. 最终训练与测试流程 ---
-    print("\n--- 开始最终训练与测试流程 ---")
+def inverse_transform_capacity(y, scaler, feature_cols):
+    # y 一维容量数组，scaler为已保存的StandardScaler
+    idx = feature_cols.index('最大容量(Ah)') if '最大容量(Ah)' in feature_cols else -1
+    tmp = np.zeros((len(y), len(feature_cols)))
+    tmp[:, idx] = y
+    y_inv = scaler.inverse_transform(tmp)[:, idx]
+    return y_inv
 
-    # 在 'test_only' 模式下加载已保存的参数
-    if EXECUTION_MODE == 'test_only':
-        if not os.path.exists(PARAMS_SAVE_PATH):
-            raise FileNotFoundError(f"错误: 找不到参数文件 {PARAMS_SAVE_PATH}。请先运行 'optimize_and_test' 模式。")
-        with open(PARAMS_SAVE_PATH, 'r') as f:
-            best_params = json.load(f)
-        print(f"已从 {PARAMS_SAVE_PATH} 加载最佳参数。")
 
-    # 准备最终的数据集
-    all_battery_ids = sorted(full_data['电池编号'].unique())
-    train_val_end_idx = int(len(all_battery_ids) * 0.8)
-    train_val_ids = all_battery_ids[:train_val_end_idx]
-    test_ids = all_battery_ids[train_val_end_idx:]
+# --- 6. 训练函数 ---
+def train_epoch(model, dataloader, optimizer, criterion, scheduler, device, scaler):
+    model.train()
+    total_loss = 0
+    for batch_x, batch_y, batch_cycle_idx in dataloader:
+        batch_x, batch_y, batch_cycle_idx = batch_x.to(device), batch_y.to(device), batch_cycle_idx.to(device)
 
-    print(f"\n最终训练集 (train+val) 电池ID: {train_val_ids}")
-    print(f"最终测试集 电池ID: {test_ids}")
+        optimizer.zero_grad()
 
-    cols_for_scaling = [target_col] + feature_cols
-    data_to_process = full_data[cols_for_scaling]
-    train_val_raw = data_to_process[full_data['电池编号'].isin(train_val_ids)]
-    scaler = MinMaxScaler().fit(train_val_raw)
-    scaler_y = MinMaxScaler().fit(train_val_raw[[target_col]])
+        # 如果使用GPU和AMP，则启用 autocast
+        if scaler:
+            with torch.cuda.amp.autocast():
+                outputs = model(batch_x, batch_cycle_idx)[:, :, 0].squeeze(-1)
+                loss = criterion(outputs, batch_y.squeeze(-1))
 
-    # 创建最终模型
-    final_model = IMVTensorLSTM(len(feature_cols), 1, best_params['n_units']).to(device)
+            # Scaler进行反向传播
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:  # 如果不使用GPU，则按常规流程
+            outputs = model(batch_x, batch_cycle_idx)[:, :, 0].squeeze(-1)
+            loss = criterion(outputs, batch_y.squeeze(-1))
+            loss.backward()
+            optimizer.step()
 
-    # 训练或加载最终模型
-    if EXECUTION_MODE == 'optimize_and_test':
-        print("\n--- 使用最佳参数训练最终模型 ---")
-        X_train_final, y_train_final = [], []
-        for battery_id in train_val_ids:
-            battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
-            X_b, y_b = create_sliding_windows(battery_data_scaled, best_params['window_size'], 1)
-            if len(X_b) > 0:
-                X_train_final.append(X_b);
-                y_train_final.append(y_b)
-        X_train_final, y_train_final = np.concatenate(X_train_final), np.concatenate(y_train_final)
-        final_train_loader = DataLoader(BatteryDataset(X_train_final, y_train_final),
-                                        batch_size=best_params['batch_size'], shuffle=True)
+        total_loss += loss.item()
 
-        optimizer = torch.optim.AdamW(final_model.parameters(), lr=best_params['learning_rate'])
-        criterion = nn.MSELoss()
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS_FINAL)
+    scheduler.step()
+    return total_loss / len(dataloader)
 
-        for epoch in range(EPOCHS_FINAL):
-            final_model.train()
-            epoch_loss = 0
-            for features, targets in final_train_loader:
-                features, targets = features.to(device), targets.to(device)
-                optimizer.zero_grad()
-                predictions = final_model(features).squeeze(-1)
-                loss = criterion(predictions, targets)
-                loss.backward()
-                optimizer.step()
-                epoch_loss += loss.item()
-            scheduler.step()
-            if (epoch + 1) % 10 == 0:
-                print(
-                    f"最终模型训练中... Epoch {epoch + 1}/{EPOCHS_FINAL}, Loss: {epoch_loss / len(final_train_loader):.6f}")
+# --- 7. 验证/测试函数 ---
+def evaluate(model, dataloader, criterion, device):
+    model.eval()
+    total_loss = 0
+    all_preds = []
+    all_labels = []
 
-        torch.save(final_model.state_dict(), MODEL_SAVE_PATH)
-        print(f"\n最佳模型已保存至: {MODEL_SAVE_PATH}")
-
-    elif EXECUTION_MODE == 'test_only':
-        if not os.path.exists(MODEL_SAVE_PATH):
-            raise FileNotFoundError(f"错误: 找不到模型文件 {MODEL_SAVE_PATH}。请先运行 'optimize_and_test' 模式。")
-        final_model.load_state_dict(torch.load(MODEL_SAVE_PATH, map_location=device))
-        print(f"\n已从 {MODEL_SAVE_PATH} 加载最终模型。")
-
-    # --- 3. 在测试集上评估最终模型 ---
-    print("\n--- 在独立测试集上评估最终模型 ---")
-    X_test_final, y_test_final = [], []
-    for battery_id in test_ids:
-        battery_data_scaled = scaler.transform(data_to_process[full_data['电池编号'] == battery_id])
-        X_b, y_b = create_sliding_windows(battery_data_scaled, best_params['window_size'], 1)
-        if len(X_b) > 0:
-            X_test_final.append(X_b);
-            y_test_final.append(y_b)
-    X_test_final, y_test_final = np.concatenate(X_test_final), np.concatenate(y_test_final)
-    final_test_loader = DataLoader(BatteryDataset(X_test_final, y_test_final), batch_size=best_params['batch_size'],
-                                   shuffle=False)
-
-    final_model.eval()
-    all_preds, all_targets = [], []
     with torch.no_grad():
-        for features, targets in final_test_loader:
-            features, targets = features.to(device), targets.to(device)
-            all_preds.append(final_model(features).squeeze(-1).cpu().numpy())
-            all_targets.append(targets.cpu().numpy())
+        for batch_x, batch_y, batch_cycle_idx in dataloader:
+            batch_x, batch_y, batch_cycle_idx = batch_x.to(device), batch_y.to(device), batch_cycle_idx.to(device)
 
-    predictions = scaler_y.inverse_transform(np.concatenate(all_preds).reshape(-1, 1))
-    targets = scaler_y.inverse_transform(np.concatenate(all_targets).reshape(-1, 1))
+            outputs = model(batch_x, batch_cycle_idx)[:, :, 0].squeeze(-1)
+            loss = criterion(outputs, batch_y.squeeze(-1))
 
-    mse, rmse, mae, r2 = mean_squared_error(targets, predictions), np.sqrt(
-        mean_squared_error(targets, predictions)), mean_absolute_error(targets, predictions), r2_score(targets,
-                                                                                                       predictions)
+            total_loss += loss.item()
+            all_preds.append(outputs.cpu().numpy())
+            all_labels.append(batch_y.cpu().numpy().squeeze(-1))
 
-    print("\n--- 最终评估结果 ---")
-    print(f"MSE (均方误差):      {mse:.6f}")
-    print(f"RMSE (均方根误差):   {rmse:.6f}")
-    print(f"MAE (平均绝对误差):  {mae:.6f}")
-    print(f"R² (R-squared):      {r2:.6f}")
+    avg_loss = total_loss / len(dataloader)
 
-    pd.DataFrame({'Metric': ['MSE', 'RMSE', 'MAE', 'R2'], 'Value': [mse, rmse, mae, r2]}).to_csv(METRICS_SAVE_PATH,
-                                                                                                 index=False)
-    print(f"最终评估指标已保存至: {METRICS_SAVE_PATH}")
+    # 将所有批次的预测和标签连接起来
+    predictions = np.concatenate(all_preds)
+    labels = np.concatenate(all_labels)
 
-    plt.figure(figsize=(14, 7))
-    plt.plot(targets, label='Actual SOH', color='blue', marker='o', linestyle='-', markersize=4)
-    plt.plot(predictions, label='Predicted SOH', color='red', marker='x', linestyle='--', markersize=4)
-    plt.title('predict result in test dataset', fontsize=16)
-    plt.xlabel('Test Sample Point', fontsize=12)
-    plt.ylabel('max capacity (Ah)', fontsize=12)
+    # 计算评估指标
+    mse = mean_squared_error(labels, predictions)
+    mae = mean_absolute_error(labels, predictions)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(labels, predictions)
+
+    metrics = {
+        'MSE': mse,
+        'MAE': mae,
+        'RMSE': rmse,
+        'R2': r2
+    }
+
+    return avg_loss, metrics, predictions, labels
+
+# 获取参数信息，组合成标签字符串
+def get_exp_tag(config):
+    train_ids = '-'.join([str(i) for i in config.train_batteries])
+    val_ids = '-'.join([str(i) for i in config.val_batteries])
+    test_ids = '-'.join([str(i) for i in config.test_batteries])
+    tag = (
+        f"train{train_ids}_val{val_ids}_test{test_ids}_"
+        f"ep{config.epochs}_bs{config.batch_size}_lr{config.learning_rate}_"
+        f"dm{config.d_model}_sl{config.seq_len}"
+    )
+    return tag
+
+
+# --- 8. 可视化函数 ---
+def plot_results(labels, preds, title, save_path):
+    """绘制真实值与预测值的对比图"""
+    plt.figure(figsize=(12, 6))
+    plt.plot(labels, label='True Labels')
+    plt.plot(preds, label='Predictions', alpha=0.7)
+    plt.title(title, fontsize=16)
+    plt.xlabel('Sample Index', fontsize=12)
+    plt.ylabel('max capacity(Ah)', fontsize=12)
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(RESULT_DIR, '测试集结果'))
-    plt.show()
+    plt.savefig(save_path)
+    plt.close()
 
+
+# --- 9. 主执行函数 ---
+def main():
+    # 1. 初始化配置
+    config = Config()
+
+    # 2. 设置随机种子
+    set_seed(config.seed)
+
+    # 3. 根据参数创建唯一的实验文件夹路径
+
+    # 使用您已有的函数生成唯一标签
+    exp_tag = get_exp_tag(config)
+
+    # 将原始的 save_path 作为根目录
+    base_save_path = config.save_path
+
+    # 更新 config.save_path，使其指向本次实验的专属文件夹
+    # 后续所有代码都会使用这个新的、唯一的路径
+    config.save_path = os.path.join(base_save_path, exp_tag)
+
+    # 创建这个专属文件夹（如果不存在）
+    os.makedirs(config.save_path, exist_ok=True)
+
+    print(f"本次实验结果将保存到: {config.save_path}")
+
+    # # 4. 设置matplotlib支持中文
+    # plt.rcParams['font.sans-serif'] = ['SimHei']
+    # plt.rcParams['axes.unicode_minus'] = False
+
+    print(f"使用设备: {config.device}")
+
+    # 5. 加载数据，并保存归一化器
+    try:
+        # 注意load_and_preprocess_data需return feature_cols
+        train_dataset, val_dataset, test_dataset, scaler, feature_cols = load_and_preprocess_data(config)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"数据加载失败: {e}")
+        return
+    joblib.dump(scaler, os.path.join(config.save_path, 'scaler.pkl'))
+
+    # 为DataLoader增加 num_workers 和 pin_memory
+    # num_workers 的值可以设为 4, 8, 16 等，取决于你的CPU核心数，可以多尝试几个值以找到最佳性能
+    train_loader = DataLoader(train_dataset,
+                              batch_size=config.batch_size,
+                              shuffle=True,
+                              num_workers=16,  # 显著提升性能
+                              pin_memory=True)  # 加速数据到GPU的传输
+
+    val_loader = DataLoader(val_dataset,
+                            batch_size=config.batch_size,
+                            shuffle=False,
+                            num_workers=16,
+                            pin_memory=True)
+
+    test_loader = DataLoader(test_dataset,
+                             batch_size=config.batch_size,
+                             shuffle=False,
+                             num_workers=16,
+                             pin_memory=True)
+    print(f"数据加载完成。训练集样本数: {len(train_dataset)}, 验证集样本数: {len(val_dataset)}, 测试集样本数: {len(test_dataset)}")
+
+    # 6. 初始化模型、损失函数、优化器、调度器
+    model = Model(config).to(config.device)
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6)
+    # 只有在使用GPU时才需要GradScaler 的初始化
+    scaler = GradScaler() if config.device.type == 'cuda' else None
+
+    # 7. 反归一化函数
+    def inverse_transform_capacity(y, scaler, feature_cols):
+        idx = feature_cols.index('最大容量(Ah)') if '最大容量(Ah)' in feature_cols else -1
+        tmp = np.zeros((len(y), len(feature_cols)))
+        tmp[:, idx] = y
+        y_inv = scaler.inverse_transform(tmp)[:, idx]
+        return y_inv
+
+    # 8. 模式选择
+    metrics_log = []
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+
+    if config.mode in ['both', 'train']:
+        print("\n开始训练模型...")
+        for epoch in range(config.epochs):
+            # 将 scaler 作为参数传递给 train_epoch 函数
+            train_loss = train_epoch(model, train_loader, optimizer, criterion, scheduler, config.device, scaler)
+            val_loss, val_metrics, _, _ = evaluate(model, val_loader, criterion, config.device)
+
+            print(f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f} | 验证 R2: {val_metrics['R2']:.4f}")
+
+            log_entry = {'epoch': epoch + 1, 'train_loss': train_loss, 'val_loss': val_loss,
+                         **{'val_' + k: v for k, v in val_metrics.items()}}
+            metrics_log.append(log_entry)
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save(model.state_dict(), os.path.join(config.save_path, f'best_model_{exp_tag}.pth'))
+                print(f"  - 验证损失降低，保存模型到 {os.path.join(config.save_path, f'best_model_{exp_tag}.pth')}")
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= config.patience:
+                    print(f"\n连续 {config.patience} 个 epoch 验证损失没有改善，提前停止训练。")
+                    break
+        print("\n训练完成。")
+        # 保存训练日志
+        metrics_df = pd.DataFrame(metrics_log)
+        metrics_df.to_csv(os.path.join(config.save_path, f'training_metrics_log_{exp_tag}.csv'), index=False)
+        if config.mode == 'train':
+            print('只训练模型并退出...')
+            return
+
+    if config.mode in ['both', 'validate']:
+        print('加载最佳模型进行最终评估...')
+        model.load_state_dict(torch.load(os.path.join(config.save_path, f'best_model_{exp_tag}.pth')))
+        scaler = joblib.load(os.path.join(config.save_path, 'scaler.pkl'))
+
+        # 在验证集上评估
+        _, val_metrics, val_preds, val_labels = evaluate(model, val_loader, criterion, config.device)
+        # 在测试集上评估
+        _, test_metrics, test_preds, test_labels = evaluate(model, test_loader, criterion, config.device)
+
+        # --- 修改：由于目标值从未被归一化，我们不需要反归一化 ---
+        # 直接使用evaluate函数返回的真实值和预测值即可
+        val_labels_inv = val_labels
+        val_preds_inv = val_preds
+        test_labels_inv = test_labels
+        test_preds_inv = test_preds
+
+        # 保存所有指标 (后续代码不变)
+        final_metrics = pd.DataFrame([
+            {'set': 'validation', **val_metrics},
+            {'set': 'test', **test_metrics}
+        ])
+        final_metrics.to_csv(os.path.join(config.save_path, 'final_evaluation_metrics.csv'), index=False)
+        print(f"最终验证集指标: MSE={val_metrics['MSE']:.6f}, MAE={val_metrics['MAE']:.6f}, RMSE={val_metrics['RMSE']:.6f}, R2={val_metrics['R2']:.4f}")
+        print(f"最终测试集指标: MSE={test_metrics['MSE']:.6f}, MAE={test_metrics['MAE']:.6f}, RMSE={test_metrics['RMSE']:.6f}, R2={test_metrics['R2']:.4f}")
+
+        # 保存预测值（反归一化）
+        val_results_df = pd.DataFrame({'True_Capacity': val_labels_inv, 'Predicted_Capacity': val_preds_inv})
+        test_results_df = pd.DataFrame({'True_Capacity': test_labels_inv, 'Predicted_Capacity': test_preds_inv})
+        val_results_df.to_csv(os.path.join(config.save_path, f'validation_predictions_{exp_tag}.csv'), index=False)
+        test_results_df.to_csv(os.path.join(config.save_path, f'test_predictions_{exp_tag}.csv'), index=False)
+        print(f"验证集和测试集的预测值已保存。")
+
+        # 可视化结果（反归一化）
+        plot_results(val_labels_inv, val_preds_inv, f'verification set: True vs predict',
+                     os.path.join(config.save_path, f'validation_plot_{exp_tag}.png'))
+        plot_results(test_labels_inv, test_preds_inv, f'test set: True vs predict',
+                     os.path.join(config.save_path, f'test_plot_{exp_tag}.png'))
+        print(f"结果对比图已保存。")
+
+
+if __name__ == '__main__':
+    main()

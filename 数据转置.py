@@ -3,14 +3,14 @@ import os
 import re
 
 # === 参数设置 ===
-input_dir = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval\转置前'  # 修改为你存放 Battery_xx_RelaxationVoltage.csv 的目录
-output_dir = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval'   # 修改为你希望保存输出文件的目录
-output_dir_2 = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\End'
+input_dir = r'D:\任务归档\电池\研究\data\弛豫电压-银\RelaxationVoltage_CSVs'  # 修改为你存放 Battery_xx_RelaxationVoltage.csv 的目录
+output_dir = r'D:\任务归档\电池\研究\data\弛豫电压-银\转置'   # 修改为你希望保存输出文件的目录
+output_dir_2 = r'D:\任务归档\电池\研究\data\弛豫电压-银\转置\end'
 os.makedirs(output_dir, exist_ok=True)
 
 # === 处理 battery1 到 battery24 ===
 for i in range(1, 25):
-    file_name = f'relaxation_battery{i}.csv'
+    file_name = f'Battery_{i:02}_RelaxationVoltage.csv'
     input_path = os.path.join(input_dir, file_name)
 
     if not os.path.exists(input_path):
