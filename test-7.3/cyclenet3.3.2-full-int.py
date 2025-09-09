@@ -23,29 +23,29 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-full-int/20'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
+        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        # self.val_batteries = [5, 10, 13, 19]
+        # self.test_batteries = [6, 12, 14, 20]
 
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
+        # self.train_batteries = [1, 2, 3, 4]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
 
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # self.train_batteries = [15, 17, 18, 19]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        self.train_batteries = [21, 22, 23, 24]
+        self.val_batteries = [19]
+        self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,8 +53,8 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
-            # '弛豫末端电压'
+            '3.3~3.6V充电时间(s)',
+            '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
@@ -62,15 +62,14 @@ class Config:
 
         # --- 模型超参数 ---
         self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
-        self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.sequence_length = 6 # A文件的序列长度 (弛豫段电压的点数)
+        self.scalar_feature_dim = len(self.features_from_C) + 1  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
         self.dropout = 0.2  # Dropout概率，0.1表示随机丢弃10%的神经元
         self.use_revin = False  # 是否使用可逆实例归一化
         self.weight_decay = 0.0001  # 增加权重衰减，1e-4或1e-5是常用的初始值
-        self.cycle_amount = 150
 
         # --- 训练参数 ---
         self.epochs = 500
@@ -259,7 +258,7 @@ def load_and_preprocess_data(config):
         raise ValueError("未能成功加载任何电池数据。")
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
-    full_df = full_df[full_df['循环号'] <= config.cycle_amount].copy()
+
     # #容量归一化
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
@@ -267,20 +266,18 @@ def load_and_preprocess_data(config):
     target_col = '循环号'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
     # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
     # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
     # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
     #
     # # 从config中获取文件C的手动选择特征
     # features_from_C = config.features_from_C
-
+    #
     # # 合并来自文件B和文件C的特征列表
     # scalar_feature_cols = features_from_B + features_from_C
-
     scalar_feature_cols = config.features_from_C
-
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:
@@ -359,20 +356,20 @@ def train_epoch(model, dataloader, optimizer, criterion, device, grad_scaler):
     return total_loss / len(dataloader)
 
 # --- 7. 验证/测试函数 (已修改) ---
+# --- 7. 验证/测试函数 (已修改) ---
 def evaluate(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0
     all_preds = []
     all_labels = []
-    all_cycle_indices = []  # <--- 新增：创建一个列表来存储循环号
+    all_cycle_indices = []
 
     with torch.no_grad():
-        # 修改了数据解包
         for batch_seq, batch_scalar, batch_cycle_idx, batch_y in dataloader:
             batch_seq = batch_seq.to(device)
             batch_scalar = batch_scalar.to(device)
             batch_cycle_idx = batch_cycle_idx.to(device)
-            batch_y = batch_y.to(device).unsqueeze(-1)  # 确保y的形状为(batch, 1)
+            batch_y = batch_y.to(device).unsqueeze(-1)
 
             outputs = model(batch_seq, batch_scalar, batch_cycle_idx)
             loss = criterion(outputs, batch_y)
@@ -380,22 +377,30 @@ def evaluate(model, dataloader, criterion, device):
             total_loss += loss.item()
             all_preds.append(outputs.cpu().numpy())
             all_labels.append(batch_y.cpu().numpy())
-            all_cycle_indices.append(batch_cycle_idx.cpu().numpy()) # <--- 新增：收集当前批次的循环号
+            all_cycle_indices.append(batch_cycle_idx.cpu().numpy())
 
     avg_loss = total_loss / len(dataloader)
 
     # 拼接所有批次的预测和标签
-    predictions = np.concatenate(all_preds).flatten()
-    labels = np.concatenate(all_labels).flatten()
-    cycle_indices = np.concatenate(all_cycle_indices).flatten() # <--- 新增：将所有循环号拼接成一个数组
+    predictions_float = np.concatenate(all_preds).flatten()
 
+    # --- 主要修改点 ---
+    # 将模型的浮点数输出四舍五入为最接近的整数，并转换为整型
+    predictions = np.round(predictions_float).astype(int)
+    # --- 修改结束 ---
+
+    labels = np.concatenate(all_labels).flatten()
+    cycle_indices = np.concatenate(all_cycle_indices).flatten()
+
+    # 使用四舍五入后的整数预测值来计算评估指标
     mse = mean_squared_error(labels, predictions)
     mae = mean_absolute_error(labels, predictions)
     rmse = np.sqrt(mse)
     r2 = r2_score(labels, predictions)
 
     metrics = {'MSE': mse, 'MAE': mae, 'RMSE': rmse, 'R2': r2}
-    # <--- 修改：在返回值中增加循环号
+
+    # 返回整数预测值
     return avg_loss, metrics, predictions, labels, cycle_indices
 
 # --- 8. 可视化和工具函数 (基本不变) ---

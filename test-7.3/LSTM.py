@@ -23,29 +23,29 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/LSTM'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
+        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        self.val_batteries = [5, 10, 13, 19]
+        self.test_batteries = [6, 12, 14, 20]
 
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
+        # self.train_batteries = [1, 2, 3, 4]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
 
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # self.train_batteries = [15, 17, 18, 19]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,24 +53,29 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
-            # '弛豫末端电压'
+            '3.3~3.6V充电时间(s)',
+            '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
         self.sequence_feature_dim = 6
 
-        # --- 模型超参数 ---
-        self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
-        self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
-        self.d_model = 256  # 隐藏层维度
-        self.d_ff = 1024  # MLP编码器和预测头的中间层维度
-        self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
-        self.dropout = 0.2  # Dropout概率，0.1表示随机丢弃10%的神经元
-        self.use_revin = False  # 是否使用可逆实例归一化
-        self.weight_decay = 0.0001  # 增加权重衰减，1e-4或1e-5是常用的初始值
-        self.cycle_amount = 150
+        # --- 模型超参数 (已修改为LSTM) ---
+        # 【【【关键修改】】】
+        # LSTM需要一个时间序列，所以 sequence_length 必须大于 1。
+        # 根据你的数据文件名 'Interval-singleraw-200x'，似乎每个循环有200个点。
+        # 你可以选择使用其中的一部分，例如前50个点。
+        self.sequence_length = 50  # <<-- 重要！将 1 修改为一个更大的值, 比如 50 或 100
+
+        # 【【【新增LSTM超参数】】】
+        self.lstm_hidden_dim = 128  # LSTM隐藏层的大小
+        self.lstm_layers = 2  # LSTM的层数
+
+        # 【【【保留和调整的参数】】】
+        self.scalar_feature_dim = len(self.features_from_C)  # 标量特征数量
+        self.d_ff = 512  # 预测头的中间层维度
+        self.dropout = 0.3  # Dropout概率，可以适当调高
+        self.weight_decay = 0.0001
 
         # --- 训练参数 ---
         self.epochs = 500
@@ -98,79 +103,62 @@ def set_seed(seed):
         torch.backends.cudnn.benchmark = False
 
 
-# --- 3. 新的多模态模型定义 ---
-class RecurrentCycle(torch.nn.Module):
-    def __init__(self, cycle_len, channel_size):
-        super(RecurrentCycle, self).__init__()
-        self.cycle_len = cycle_len
-        self.channel_size = channel_size
-        self.data = torch.nn.Parameter(torch.zeros(cycle_len, channel_size), requires_grad=True)
-
-    def forward(self, index, length):
-        # 这里的 length 始终为1，因为我们是单点预测
-        gather_index = (index.view(-1, 1) + torch.arange(length, device=index.device).view(1, -1)) % self.cycle_len
-        return self.data[gather_index]
-
-
-#
-class CycleNetForSOH(nn.Module):
+class LSTMPredictor(nn.Module):
     def __init__(self, configs):
-        super(CycleNetForSOH, self).__init__()
+        super(LSTMPredictor, self).__init__()
         self.configs = configs
 
-        # 1. 为两种不同的输入数据创建编码器
-        self.sequence_encoder = nn.Linear(configs.sequence_length * configs.sequence_feature_dim, configs.d_model // 2)
-        self.scalar_encoder = nn.Linear(configs.scalar_feature_dim, configs.d_model // 2)
-
-        # 合并后的特征维度
-        self.combined_feature_dim = configs.d_model
-
-        # 2. 引入 CycleNet 的核心：RecurrentCycle 模块
-        # 注意 channel_size 是我们合并后的特征维度
-        self.cycle_queue = RecurrentCycle(
-            cycle_len=configs.meta_cycle_len,
-            channel_size=self.combined_feature_dim
+        # 1. LSTM层，用于处理序列数据 (x_seq)
+        # input_size: 输入序列中每个时间点的特征维度
+        # hidden_size: LSTM隐藏层的维度
+        # num_layers: LSTM的层数
+        # batch_first=True: 让输入和输出张量的形状为 (batch, seq, feature)
+        # dropout: 在多层LSTM的层与层之间应用dropout
+        self.lstm = nn.LSTM(
+            input_size=configs.sequence_feature_dim,
+            hidden_size=configs.lstm_hidden_dim,
+            num_layers=configs.lstm_layers,
+            batch_first=True,
+            dropout=configs.dropout if configs.lstm_layers > 1 else 0
         )
 
-        # 3. 创建预测头，用于处理去除了周期性后的特征
-        # 输出维度为1，因为我们只预测一个值（最大容量）
+        # 2. Dropout层，用于防止过拟合
+        self.dropout = nn.Dropout(configs.dropout)
+
+        # 3. 全连接层 (预测头)
+        # 输入维度 = LSTM隐藏层维度 + 标量特征的维度
+        # 输出维度为1，因为我们只预测一个值 (循环号)
         self.prediction_head = nn.Sequential(
-            nn.Linear(self.combined_feature_dim, configs.d_ff),
+            nn.Linear(configs.lstm_hidden_dim + configs.scalar_feature_dim, configs.d_ff),
             nn.ReLU(),
             nn.Dropout(configs.dropout),
             nn.Linear(configs.d_ff, 1)
         )
 
-    def forward(self, x_seq, x_scalar, cycle_number):
-        # x_seq: (batch, seq_len, 3) -> (batch, 1, 3)
-        # x_scalar: (batch, scalar_dim) -> (batch, 10)
-        # cycle_number: (batch,) -> 真实的循环号，如 1, 2, ..., 1000
+    def forward(self, x_seq, x_scalar):
+        # x_seq: (batch_size, sequence_length, sequence_feature_dim)
+        # x_scalar: (batch_size, scalar_feature_dim)
 
-        # --- 1. 特征编码与合并 ---
-        # 展平序列输入
-        x_seq_flat = x_seq.view(x_seq.size(0), -1)
+        # --- 1. 通过LSTM处理序列数据 ---
+        # lstm_out 的形状: (batch_size, sequence_length, lstm_hidden_dim)
+        # hidden 的形状: (num_layers, batch_size, lstm_hidden_dim)
+        # 我们通常使用最后一个时间点的隐藏状态作为整个序列的表示
+        lstm_out, (hidden, cell) = self.lstm(x_seq)
 
-        seq_embedding = self.sequence_encoder(x_seq_flat)
-        scalar_embedding = self.scalar_encoder(x_scalar)
+        # 从多层LSTM中获取最后一层的隐藏状态
+        # hidden[-1] 的形状是 (batch_size, lstm_hidden_dim)
+        sequence_embedding = hidden[-1]
 
-        # 合并成一个统一的特征向量
-        combined_features = torch.cat((seq_embedding, scalar_embedding), dim=1)  # 形状: (batch, d_model)
+        # 应用dropout
+        sequence_embedding = self.dropout(sequence_embedding)
 
-        # --- 2. CycleNet核心：分解周期性 ---
-        # 计算在元周期中的位置
-        cycle_index = cycle_number % self.configs.meta_cycle_len
-
-        # 从合并的特征中减去学习到的周期成分
-        # combined_features 需要增加一个维度以匹配 RecurrentCycle 的输出
-        # length=1 因为我们每个样本只有一个组合特征向量
-        decycled_features = combined_features - self.cycle_queue(cycle_index, length=1).squeeze(1)
+        # --- 2. 合并特征 ---
+        # 将LSTM处理后的序列特征和原始的标量特征拼接在一起
+        combined_features = torch.cat((sequence_embedding, x_scalar), dim=1)
 
         # --- 3. 预测 ---
-        # 将去除了周期性的特征送入预测头
-        prediction = self.prediction_head(decycled_features)
-
-        # 注意：这里我们不再需要把周期加回去，因为我们的目标（容量）和输入特征不在一个域，
-        # 加上周期没有物理意义。我们只是利用周期分解来帮助模型更好地学习非周期性的退化趋势。
+        # 将合并后的特征送入预测头，得到最终预测值
+        prediction = self.prediction_head(combined_features)
 
         return prediction
 
@@ -237,10 +225,15 @@ def load_and_preprocess_data(config):
             # 三个特征列名
             # 根据 config 中的 sequence_feature_dim 参数动态生成特征列名
             feature_cols = [f'弛豫段电压{i}' for i in range(1, config.sequence_feature_dim + 1)]
-            sequence_df = df_a.groupby('循环号')[feature_cols].apply(lambda x: x.values).reset_index(
-                name='voltage_sequence')
-            print("重命名之后的列名:", sequence_df.columns)  # 加上这行来查看
-            # 过滤掉长度不符合要求的序列
+            # 修正后的代码
+            # 截取每个序列的前 config.sequence_length 个点
+            sequence_df = df_a.groupby('循环号')[feature_cols].apply(
+                lambda x: x.head(config.sequence_length).values
+            ).reset_index(name='voltage_sequence')
+
+            print("重命名之后的列名:", sequence_df.columns)
+
+            # 过滤掉那些原始长度不足 config.sequence_length 的序列（作为安全检查）
             sequence_df = sequence_df[sequence_df['voltage_sequence'].apply(len) == config.sequence_length]
 
             # 3. 合并序列和标量数据
@@ -259,7 +252,7 @@ def load_and_preprocess_data(config):
         raise ValueError("未能成功加载任何电池数据。")
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
-    full_df = full_df[full_df['循环号'] <= config.cycle_amount].copy()
+
     # #容量归一化
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
@@ -267,20 +260,18 @@ def load_and_preprocess_data(config):
     target_col = '循环号'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
     # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
     # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
     # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
     #
     # # 从config中获取文件C的手动选择特征
     # features_from_C = config.features_from_C
-
+    #
     # # 合并来自文件B和文件C的特征列表
     # scalar_feature_cols = features_from_B + features_from_C
-
     scalar_feature_cols = config.features_from_C
-
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:
@@ -341,14 +332,14 @@ def train_epoch(model, dataloader, optimizer, criterion, device, grad_scaler):
         # 使用混合精度训练
         if grad_scaler:
             with autocast():
-                outputs = model(batch_seq, batch_scalar, batch_cycle_idx)
+                outputs = model(batch_seq, batch_scalar)
                 loss = criterion(outputs, batch_y)
 
             grad_scaler.scale(loss).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
         else:
-            outputs = model(batch_seq, batch_scalar, batch_cycle_idx)
+            outputs = model(batch_seq, batch_scalar)
             loss = criterion(outputs, batch_y)
             loss.backward()
             optimizer.step()
@@ -374,7 +365,7 @@ def evaluate(model, dataloader, criterion, device):
             batch_cycle_idx = batch_cycle_idx.to(device)
             batch_y = batch_y.to(device).unsqueeze(-1)  # 确保y的形状为(batch, 1)
 
-            outputs = model(batch_seq, batch_scalar, batch_cycle_idx)
+            outputs = model(batch_seq, batch_scalar)
             loss = criterion(outputs, batch_y)
 
             total_loss += loss.item()
@@ -406,7 +397,6 @@ def get_exp_tag(config):
     tag = (
         f"train{train_ids}_val{val_ids}_test{test_ids}_"
         f"ep{config.epochs}_bs{config.batch_size}_lr{config.learning_rate}_dp{config.dropout}"
-        f"dm{config.d_model}"
     )
     return tag
 
@@ -484,7 +474,7 @@ def main():
     print(
         f"数据加载完成。训练集样本数: {len(train_dataset)}, 验证集样本数: {len(val_dataset)}, 测试集样本数: {len(test_dataset)}")
 
-    model = CycleNetForSOH(config).to(config.device)
+    model = LSTMPredictor(config).to(config.device)
     criterion = nn.MSELoss()
     # optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     optimizer = optim.Adam(model.parameters(),

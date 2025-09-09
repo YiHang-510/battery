@@ -23,29 +23,29 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-optimis/all'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
+        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        self.val_batteries = [5, 10, 13, 19]
+        self.test_batteries = [6, 12, 14, 20]
 
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
+        # self.train_batteries = [1, 2, 3, 4]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
 
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # self.train_batteries = [15, 17, 18, 19]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,8 +53,8 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
-            # '弛豫末端电压'
+            '3.3~3.6V充电时间(s)',
+            '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
@@ -63,14 +63,13 @@ class Config:
         # --- 模型超参数 ---
         self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
         self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.scalar_feature_dim = len(self.features_from_C)  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
         self.dropout = 0.2  # Dropout概率，0.1表示随机丢弃10%的神经元
         self.use_revin = False  # 是否使用可逆实例归一化
         self.weight_decay = 0.0001  # 增加权重衰减，1e-4或1e-5是常用的初始值
-        self.cycle_amount = 150
 
         # --- 训练参数 ---
         self.epochs = 500
@@ -240,7 +239,8 @@ def load_and_preprocess_data(config):
             sequence_df = df_a.groupby('循环号')[feature_cols].apply(lambda x: x.values).reset_index(
                 name='voltage_sequence')
             print("重命名之后的列名:", sequence_df.columns)  # 加上这行来查看
-            # 过滤掉长度不符合要求的序列
+            # 新逻辑：截断或填充序列以确保长度统一
+            # 这里我们简单地取前 N 个点，并过滤掉那些长度不足的序列
             sequence_df = sequence_df[sequence_df['voltage_sequence'].apply(len) == config.sequence_length]
 
             # 3. 合并序列和标量数据
@@ -259,7 +259,7 @@ def load_and_preprocess_data(config):
         raise ValueError("未能成功加载任何电池数据。")
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
-    full_df = full_df[full_df['循环号'] <= config.cycle_amount].copy()
+
     # #容量归一化
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
@@ -267,20 +267,18 @@ def load_and_preprocess_data(config):
     target_col = '循环号'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
     # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
     # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
     # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
     #
     # # 从config中获取文件C的手动选择特征
     # features_from_C = config.features_from_C
-
+    #
     # # 合并来自文件B和文件C的特征列表
     # scalar_feature_cols = features_from_B + features_from_C
-
     scalar_feature_cols = config.features_from_C
-
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:
@@ -301,6 +299,8 @@ def load_and_preprocess_data(config):
     scaler_seq = StandardScaler()
     scaler_scalar = StandardScaler()
 
+    scaler_target = StandardScaler()
+
     # 在训练集上拟合缩放器
     # 序列数据需要先展平才能fit
     all_train_sequences = np.vstack(train_df[sequence_col].values)
@@ -308,6 +308,8 @@ def load_and_preprocess_data(config):
 
     # 标量数据直接fit
     scaler_scalar.fit(train_df[scalar_feature_cols])
+
+    scaler_target.fit(train_df[[target_col]])
 
     # 应用缩放
     for df in [train_df, val_df, test_df]:
@@ -321,7 +323,8 @@ def load_and_preprocess_data(config):
     val_dataset = BatteryMultimodalDataset(val_df, sequence_col, scalar_feature_cols, target_col)
     test_dataset = BatteryMultimodalDataset(test_df, sequence_col, scalar_feature_cols, target_col)
 
-    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar}
+    # scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar} # 原来的代码
+    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar, 'target': scaler_target} # 修改后的代码
 
     return train_dataset, val_dataset, test_dataset, scalers
 # --- 6. 训练函数 (已修改) ---
@@ -359,7 +362,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, grad_scaler):
     return total_loss / len(dataloader)
 
 # --- 7. 验证/测试函数 (已修改) ---
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, scaler_target=None):
     model.eval()
     total_loss = 0
     all_preds = []
@@ -388,6 +391,17 @@ def evaluate(model, dataloader, criterion, device):
     predictions = np.concatenate(all_preds).flatten()
     labels = np.concatenate(all_labels).flatten()
     cycle_indices = np.concatenate(all_cycle_indices).flatten() # <--- 新增：将所有循环号拼接成一个数组
+
+    # ▼▼▼【增加这里】▼▼▼
+    # 如果传入了scaler，则进行反归一化
+    if scaler_target is not None:
+        predictions = scaler_target.inverse_transform(predictions.reshape(-1, 1))
+        labels = scaler_target.inverse_transform(labels.reshape(-1, 1))
+    # ▲▲▲【增加完毕】▲▲▲
+
+    # 压平数组以计算指标
+    predictions = predictions.flatten()
+    labels = labels.flatten()
 
     mse = mean_squared_error(labels, predictions)
     mae = mean_absolute_error(labels, predictions)
@@ -502,7 +516,8 @@ def main():
         for epoch in range(config.epochs):
             # train_loss = train_epoch(model, train_loader, optimizer, criterion, scheduler, config.device, grad_scaler)
             train_loss = train_epoch(model, train_loader, optimizer, criterion, config.device, grad_scaler)
-            val_loss, val_metrics, _, _, _ = evaluate(model, val_loader, criterion, config.device)
+            # 传入 scaler_target['target']
+            val_loss, val_metrics, _, _, _ = evaluate(model, val_loader, criterion, config.device, scalers['target'])
             print(
                 f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f} | 验证 R2: {val_metrics['R2']:.4f}")
 
@@ -536,9 +551,9 @@ def main():
         model.load_state_dict(torch.load(model_path, map_location=config.device))
 
         # <--- 修改：接收新增的返回值 cycle_nums
-        _, val_metrics, val_preds, val_labels, val_cycle_nums = evaluate(model, val_loader, criterion, config.device)
+        _, val_metrics, val_preds, val_labels, val_cycle_nums = evaluate(model, val_loader, criterion, config.device, scalers['target'])
         _, test_metrics, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion,
-                                                                             config.device)
+                                                                             config.device, scalers['target'])
 
         # 由于目标值'最大容量(Ah)'没有被归一化，所以不需要反归一化，直接使用即可
         print("\n--- 评估结果 ---")

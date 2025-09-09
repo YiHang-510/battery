@@ -2,8 +2,8 @@ import pandas as pd
 import os
 
 # 获取当前文件夹路径
-folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-Downsampling_100x'
-out_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-singleraw-100x'
+folder_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-Downsampling_200x'
+out_path = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-singleraw-200x'
 os.makedirs(out_path, exist_ok=True)
 
 # 遍历文件夹中的所有文件
@@ -16,7 +16,7 @@ for filename in os.listdir(folder_path):
 
         try:
             # 读取CSV文件
-            df = pd.read_csv(file_path, encoding='gbk')
+            df = pd.read_csv(file_path)
 
             # 确保文件包含预期的列
             if '循环号' not in df.columns or '弛豫段电压' not in df.columns:
@@ -30,12 +30,12 @@ for filename in os.listdir(folder_path):
             df_pivoted = df.pivot_table(index='循环号', columns='voltage_num', values='弛豫段电压').reset_index()
 
             # 重命名列
-            df_pivoted.columns = ['循环号', '弛豫段电压1', '弛豫段电压2', '弛豫段电压3', '弛豫段电压4', '弛豫段电压5', '弛豫段电压6','弛豫段电压7','弛豫段电压8','弛豫段电压9','弛豫段电压10','弛豫段电压11','弛豫段电压12']
-
+            df_pivoted.columns = ['循环号', '弛豫段电压1', '弛豫段电压2', '弛豫段电压3', '弛豫段电压4', '弛豫段电压5', '弛豫段电压6']
+#,'弛豫段电压7','弛豫段电压8','弛豫段电压9','弛豫段电压10','弛豫段电压11','弛豫段电压12'
             # 创建新的文件名并保存
             output_filename = f"{filename}"
             output_path = os.path.join(out_path, output_filename)
-            df_pivoted.to_csv(output_path, index=False, encoding='gbk')
+            df_pivoted.to_csv(output_path, index=False, encoding='utf-8-sig')
 
             print(f"  -> 文件处理完成，已保存为: {output_filename}")
 

@@ -7,14 +7,14 @@ plt.rcParams['font.sans-serif'] = ['SimHei']
 # --- 步骤 1: 读取您的两列CSV文件 ---
 # 重要：请将下面的 'your_data_file.csv' 替换成您自己的文件名。
 # 并确保列名与文件中的一致，如果不一致，请在 header=0, names=['列1', '列2'] 中指定。
-for i in range(1,25):
+for i in range(1,2):
     try:
-        file_name = f'D:\任务归档\电池\研究\data\弛豫电压\\relaxation_battery{i}.csv'  # <--- 在这里修改您的文件名
+        file_name = f'D:\任务归档\电池\研究\data\selected_feature\\relaxation\Interval\\relaxation_battery{i}_fixed_simple_restored.csv'  # <--- 在这里修改您的文件名
 
         # 假设您的列名是 'cycle' 和 'voltage'
         # 如果不是，可以这样强制指定：
         # df = pd.read_csv(file_name, header=0, names=['循环号', '弛豫段电压'])
-        df = pd.read_csv(file_name, encoding='utf-8-sig')
+        df = pd.read_csv(file_name)
 
         # 为了方便处理，我们将列名统一为 'cycle' 和 'voltage'
         # 如果您的列名是中文，请取消下面这行的注释并修改
@@ -33,7 +33,7 @@ for i in range(1,25):
 
     # --- 步骤 2: 绘制图形 ---
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
 
     # 获取所有唯一的循环号
     cycles = df['循环号'].unique()

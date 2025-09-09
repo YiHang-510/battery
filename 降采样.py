@@ -3,9 +3,9 @@ import os
 
 # --- 输入和输出文件夹的路径 ---
 # 源文件所在的文件夹
-input_dir = r'D:\任务归档\电池\研究\data\弛豫电压'
+input_dir = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\new'
 # 降采样后文件要保存的文件夹
-output_dir = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-Downsampling_200x'
+output_dir = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval-Downsampling_600x'
 
 # 确保输出文件夹存在
 os.makedirs(output_dir, exist_ok=True)
@@ -24,7 +24,7 @@ for i in range(1, 25):
         df = pd.read_csv(input_path, encoding='utf-8-sig')
 
         # 以10倍降采样数据
-        df_downsampled = df.iloc[::200, :]
+        df_downsampled = df.iloc[::600, :]
 
         # 将降采样后的数据保存到新文件夹 (保留您的gbk编码)
         df_downsampled.to_csv(output_path, index=False, encoding='utf-8-sig')

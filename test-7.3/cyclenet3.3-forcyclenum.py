@@ -21,22 +21,22 @@ class Config:
     def __init__(self):
         # --- 数据和路径设置 (修改为三个输入路径) ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
-        self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
+        # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/all'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 12,15, 17, 18, 19, 21, 22, 23, 24]
-        self.val_batteries = [5, 11, 13, 19]
+        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        self.val_batteries = [5, 10, 13, 19]
         self.test_batteries = [6, 12, 14, 20]
 
         # self.train_batteries = [1, 2, 3, 4]
         # self.val_batteries = [5]
         # self.test_batteries = [6]
 
-        # self.train_batteries = [7, 8, 9, 12]
-        # self.val_batteries = [11]
+        # self.train_batteries = [7, 8, 9, 11]
+        # self.val_batteries = [10]
         # self.test_batteries = [12]
 
         # self.train_batteries = [15, 17, 18, 19]
@@ -53,16 +53,17 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
+            '3.3~3.6V充电时间(s)',
+            # '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
-        self.sequence_feature_dim = 6
+        self.sequence_feature_dim = 7
 
         # --- 模型超参数 ---
-        self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
+        self.meta_cycle_len = 7  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
         self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) + 1  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.scalar_feature_dim = len(self.features_from_C)  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
@@ -216,19 +217,19 @@ def load_and_preprocess_data(config):
             print(f"正在处理电池 {battery_id}...")
             # 路径拼接
             path_a = os.path.join(config.path_A_sequence, f'relaxation_battery{battery_id}.csv')
-            path_b = os.path.join(config.path_B_scalar, f'EndVrlx_battery{battery_id}.csv')
+            # path_b = os.path.join(config.path_B_scalar, f'EndVrlx_battery{battery_id}.csv')
             path_c = os.path.join(config.path_C_features, f'battery{battery_id}_SOH健康特征提取结果.csv')
 
             # 加载数据
-            df_a = pd.read_csv(path_a, sep=',', encoding='gbk')  # 文件A：序列
-            df_b = pd.read_csv(path_b, sep=',', encoding='gbk')  # 文件B：标量1
-            df_c = pd.read_csv(path_c, sep=',', encoding='gbk')  # 文件C：标量2 + 目标
+            df_a = pd.read_csv(path_a, sep=',')  # 文件A：序列
+            # df_b = pd.read_csv(path_b, sep=',')  # 文件B：标量1
+            df_c = pd.read_csv(path_c, sep=',')  # 文件C：标量2 + 目标
 
             # 1. 合并标量特征
             # 确保 '循环号' 是正确的合并键
-            df_b.rename(columns=lambda x: x.strip(), inplace=True)
+            # df_b.rename(columns=lambda x: x.strip(), inplace=True)
             df_c.rename(columns=lambda x: x.strip(), inplace=True)
-            scalar_df = pd.merge(df_b, df_c, on='循环号')
+            scalar_df = df_c  # 直接将df_c作为scalar_df
 
             # 2. 处理序列数据
             # 按'循环号'分组，并将'弛豫段电压'点聚合为一个Numpy数组
@@ -262,21 +263,21 @@ def load_and_preprocess_data(config):
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
 
-    target_col = '循环号'
+    target_col = '累计放电容量(Ah)'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
-    sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
-    sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
-    features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
-
-    # 从config中获取文件C的手动选择特征
-    features_from_C = config.features_from_C
-
-    # 合并来自文件B和文件C的特征列表
-    scalar_feature_cols = features_from_B + features_from_C
-
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
+    # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
+    # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
+    # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
+    #
+    # # 从config中获取文件C的手动选择特征
+    # features_from_C = config.features_from_C
+    #
+    # # 合并来自文件B和文件C的特征列表
+    # scalar_feature_cols = features_from_B + features_from_C
+    scalar_feature_cols = config.features_from_C
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:
@@ -296,6 +297,7 @@ def load_and_preprocess_data(config):
     # 为序列数据和标量数据创建不同的缩放器
     scaler_seq = StandardScaler()
     scaler_scalar = StandardScaler()
+    scaler_target = StandardScaler()
 
     # 在训练集上拟合缩放器
     # 序列数据需要先展平才能fit
@@ -304,20 +306,23 @@ def load_and_preprocess_data(config):
 
     # 标量数据直接fit
     scaler_scalar.fit(train_df[scalar_feature_cols])
-
+    scaler_target.fit(train_df[[target_col]])  # <--- 新增：拟合目标值缩放器
     # 应用缩放
     for df in [train_df, val_df, test_df]:
         # x已经是(seq_len, 3)的形状，可以直接transform
         df[sequence_col] = df[sequence_col].apply(lambda x: scaler_seq.transform(x))
         # 缩放标量
         df.loc[:, scalar_feature_cols] = scaler_scalar.transform(df[scalar_feature_cols])
+        # 对目标值也进行transform
+        df.loc[:, [target_col]] = scaler_target.transform(df[[target_col]])
 
     # 创建Dataset
     train_dataset = BatteryMultimodalDataset(train_df, sequence_col, scalar_feature_cols, target_col)
     val_dataset = BatteryMultimodalDataset(val_df, sequence_col, scalar_feature_cols, target_col)
     test_dataset = BatteryMultimodalDataset(test_df, sequence_col, scalar_feature_cols, target_col)
 
-    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar}
+    # 将所有缩放器保存在一个字典中
+    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar, 'target': scaler_target}  # <--- 修改：将target_scaler也存起来
 
     return train_dataset, val_dataset, test_dataset, scalers
 # --- 6. 训练函数 (已修改) ---
@@ -413,7 +418,7 @@ def plot_results(labels, preds, title, save_path):
     plt.plot(preds, label='Predictions', marker='x', linestyle='--', markersize=4, alpha=0.8)
     plt.title(title, fontsize=16)
     plt.xlabel('Sample Index', fontsize=12)
-    plt.ylabel('Cycle Number', fontsize=12)
+    plt.ylabel('Cumulative Discharge Capacity (Ah)', fontsize=12)
     plt.legend()
     plt.grid(True)
     plt.savefig(save_path, dpi=1200)
@@ -435,8 +440,8 @@ def plot_diagonal_results(labels, preds, title, save_path):
     # 绘制y=x的完美预测线
     plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Prediction (y=x)')
 
-    plt.xlabel('True Cycle Number', fontsize=12)
-    plt.ylabel('Predicted Cycle Number', fontsize=12)
+    plt.xlabel('True Cumulative Discharge Capacity (Ah)', fontsize=12)  # <--- 修改
+    plt.ylabel('Predicted Cumulative Discharge Capacity (Ah)', fontsize=12)  # <--- 修改
     plt.title(title, fontsize=16)
     plt.legend()
     plt.grid(True)
@@ -459,8 +464,7 @@ def main():
     config = Config()
     set_seed(config.seed)
 
-    exp_tag = get_exp_tag(config)
-    config.save_path = os.path.join(config.save_path, exp_tag)
+    config.save_path = os.path.join(config.save_path)
     os.makedirs(config.save_path, exist_ok=True)
     print(f"本次实验结果将保存到: {config.save_path}")
     print(f"使用设备: {config.device}")
@@ -508,8 +512,8 @@ def main():
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(model.state_dict(), os.path.join(config.save_path, f'best_model_{exp_tag}.pth'))
-                print(f"  - 验证损失降低，保存模型到 {os.path.join(config.save_path, f'best_model_{exp_tag}.pth')}")
+                torch.save(model.state_dict(), os.path.join(config.save_path, f'best_model.pth'))
+                print(f"  - 验证损失降低，保存模型到 {os.path.join(config.save_path, f'best_model.pth')}")
                 epochs_no_improve = 0
             else:
                 epochs_no_improve += 1
@@ -518,23 +522,48 @@ def main():
                     break
         print("\n训练完成。")
         metrics_df = pd.DataFrame(metrics_log)
-        metrics_df.to_csv(os.path.join(config.save_path, f'training_metrics_log_{exp_tag}.csv'), index=False)
+        metrics_df.to_csv(os.path.join(config.save_path, f'training_metrics_log.csv'), index=False)
         if config.mode == 'train':
             return
 
     if config.mode in ['both', 'validate']:
         print('\n加载最佳模型进行最终评估...')
-        model_path = os.path.join(config.save_path, f'best_model_{exp_tag}.pth')
+        model_path = os.path.join(config.save_path, f'best_model.pth')
         if not os.path.exists(model_path):
             print(f"错误: 找不到已训练的模型 '{model_path}'。请先在 'train' 或 'both' 模式下运行。")
             return
 
         model.load_state_dict(torch.load(model_path, map_location=config.device))
 
+        # 从保存的文件中加载scalers字典
+        scalers = joblib.load(os.path.join(config.save_path, 'scalers.pkl'))
+        scaler_target = scalers['target']  # <--- 新增：获取目标值的缩放器
+
         # <--- 修改：接收新增的返回值 cycle_nums
         _, val_metrics, val_preds, val_labels, val_cycle_nums = evaluate(model, val_loader, criterion, config.device)
         _, test_metrics, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion,
                                                                              config.device)
+
+        # --- 新增：反归一化以获得真实的容量值 ---
+        # reshape(-1, 1) 是因为scaler需要二维输入
+        val_preds_orig = scaler_target.inverse_transform(val_preds.reshape(-1, 1)).flatten()
+        val_labels_orig = scaler_target.inverse_transform(val_labels.reshape(-1, 1)).flatten()
+        test_preds_orig = scaler_target.inverse_transform(test_preds.reshape(-1, 1)).flatten()
+        test_labels_orig = scaler_target.inverse_transform(test_labels.reshape(-1, 1)).flatten()
+
+        # --- 使用反归一化后的值重新计算指标 ---
+        val_metrics = {
+            'MSE': mean_squared_error(val_labels_orig, val_preds_orig),
+            'MAE': mean_absolute_error(val_labels_orig, val_preds_orig),
+            'RMSE': np.sqrt(mean_squared_error(val_labels_orig, val_preds_orig)),
+            'R2': r2_score(val_labels_orig, val_preds_orig)
+        }
+        test_metrics = {
+            'MSE': mean_squared_error(test_labels_orig, test_preds_orig),
+            'MAE': mean_absolute_error(test_labels_orig, test_preds_orig),
+            'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)),
+            'R2': r2_score(test_labels_orig, test_preds_orig)
+        }
 
         # 由于目标值'最大容量(Ah)'没有被归一化，所以不需要反归一化，直接使用即可
         print("\n--- 评估结果 ---")
@@ -550,25 +579,25 @@ def main():
 
         # <--- 修改：在创建DataFrame时加入'循环号'列
         val_results_df = pd.DataFrame(
-            {'Original_Cycle_Index': val_cycle_nums, 'True_Cycle': val_labels, 'Predicted_Cycle': val_preds})
+            {'Original_Cycle_Index': val_cycle_nums, 'True_Capacity_Ah': val_labels_orig, 'Predicted_Capacity_Ah': val_preds_orig})
         test_results_df = pd.DataFrame(
-            {'Original_Cycle_Index': test_cycle_nums, 'True_Cycle': test_labels, 'Predicted_Cycle': test_preds})
+            {'Original_Cycle_Index': test_cycle_nums, 'True_Capacity_Ah': test_labels_orig, 'Predicted_Capacity_Ah': test_preds_orig})
 
-        val_results_df.to_csv(os.path.join(config.save_path, f'validation_predictions_{exp_tag}.csv'), index=False)
-        test_results_df.to_csv(os.path.join(config.save_path, f'test_predictions_{exp_tag}.csv'), index=False)
+        val_results_df.to_csv(os.path.join(config.save_path, f'validation_predictions.csv'), index=False)
+        test_results_df.to_csv(os.path.join(config.save_path, f'test_predictions.csv'), index=False)
         print(f"\n验证集和测试集的预测值已保存。")
 
-        plot_results(val_labels, val_preds, 'Validation Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'validation_plot_{exp_tag}.png'))
-        plot_results(test_labels, test_preds, 'Test Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'test_plot_{exp_tag}.png'))
+        plot_results(val_labels_orig, val_preds_orig, 'Validation Set: True vs. Predicted Capacity',
+                     os.path.join(config.save_path, f'validation_plot.png'))
+        plot_results(test_labels_orig, test_preds_orig, 'Test Set: True vs. Predicted Capacity',
+                     os.path.join(config.save_path, f'test_plot.png'))
         print(f"结果对比图已保存。")
 
         # --- 新增：绘制对角图 ---
-        plot_diagonal_results(val_labels, val_preds, 'Validation Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'validation_diagonal_plot_{exp_tag}.png'))
-        plot_diagonal_results(test_labels, test_preds, 'Test Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'test_diagonal_plot_{exp_tag}.png'))
+        plot_diagonal_results(val_labels_orig, val_preds_orig, 'Validation Set: Diagonal Plot',
+                              os.path.join(config.save_path, f'validation_diagonal_plot.png'))
+        plot_diagonal_results(test_labels_orig, test_preds_orig, 'Test Set: Diagonal Plot',
+                              os.path.join(config.save_path, f'test_diagonal_plot.png'))
         print(f"对角图已保存。")
 
 if __name__ == '__main__':

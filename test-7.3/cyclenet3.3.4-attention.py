@@ -23,29 +23,29 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-attention/12'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
+        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        # self.val_batteries = [5, 10, 13, 19]
+        # self.test_batteries = [6, 12, 14, 20]
 
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
+        # self.train_batteries = [1, 2, 3, 4]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
 
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
+        self.train_batteries = [7, 8, 9, 11]
+        self.val_batteries = [10]
+        self.test_batteries = [12]
 
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # self.train_batteries = [15, 17, 18, 19]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,30 +53,29 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
+            '3.3~3.6V充电时间(s)',
             # '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
-        self.sequence_feature_dim = 6
+        self.sequence_feature_dim = 7
 
         # --- 模型超参数 ---
-        self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
+        self.meta_cycle_len = 7  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
         self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.scalar_feature_dim = len(self.features_from_C)  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
         self.dropout = 0.2  # Dropout概率，0.1表示随机丢弃10%的神经元
         self.use_revin = False  # 是否使用可逆实例归一化
         self.weight_decay = 0.0001  # 增加权重衰减，1e-4或1e-5是常用的初始值
-        self.cycle_amount = 150
 
         # --- 训练参数 ---
         self.epochs = 500
         self.batch_size = 256
         self.learning_rate = 0.002
-        self.patience = 15
+        self.patience = 10
         self.seed = 2025
         self.mode = 'both'  # 可选 'train', 'validate', 'both'
 
@@ -111,6 +110,30 @@ class RecurrentCycle(torch.nn.Module):
         gather_index = (index.view(-1, 1) + torch.arange(length, device=index.device).view(1, -1)) % self.cycle_len
         return self.data[gather_index]
 
+class FeatureAttention(nn.Module):
+    """
+    对一维特征向量进行注意力加权。
+    让模型动态学习序列特征和标量特征中，哪些部分更重要。
+    """
+    def __init__(self, input_dim, ratio=4):
+        super(FeatureAttention, self).__init__()
+        # 全连接层序列，用于计算注意力权重
+        self.fc = nn.Sequential(
+            # Squeeze: 通过一个全连接层压缩特征，学习全局信息
+            nn.Linear(input_dim, input_dim // ratio, bias=False),
+            nn.ReLU(inplace=True),
+            # Excitation: 通过第二个全连接层生成与输入维度相同的权重
+            nn.Linear(input_dim // ratio, input_dim, bias=False),
+            # Sigmoid 将权重缩放到 0-1 之间，表示每个特征的重要性
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # x 的形状: (batch_size, input_dim)
+        # 计算权重
+        weights = self.fc(x)
+        # 将计算出的权重乘以原始特征向量，进行加权
+        return x * weights
 
 #
 class CycleNetForSOH(nn.Module):
@@ -120,10 +143,36 @@ class CycleNetForSOH(nn.Module):
 
         # 1. 为两种不同的输入数据创建编码器
         self.sequence_encoder = nn.Linear(configs.sequence_length * configs.sequence_feature_dim, configs.d_model // 2)
+        # --- 新的 1D CNN 编码器 ---
+        # self.sequence_encoder = nn.Sequential(
+        #     # 输入形状: (batch, 1, 6)
+        #
+        #     # 卷积层 1
+        #     # in_channels=1, out_channels=32 (学习32种不同的特征)
+        #     # kernel_size=3 (每次看3个相邻的电压点)
+        #     # padding=1 (保持序列长度不变)
+        #     nn.Conv1d(in_channels=1, out_channels=32, kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.MaxPool1d(kernel_size=2),  # 将序列长度从 6 减半到 3
+        #     # 输出形状: (batch, 32, 3)
+        #
+        #     # 卷积层 2
+        #     nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.MaxPool1d(kernel_size=2),  # 将序列长度从 3 缩减到 1
+        #     # 输出形状: (batch, 64, 1)
+        #
+        #     nn.Flatten(),  # 将 (batch, 64, 1) 展平成 (batch, 64)
+        #
+        #     # 最后用一个全连接层将CNN的输出映射到期望的嵌入维度
+        #     nn.Linear(64, configs.d_model // 2)
+        # )
         self.scalar_encoder = nn.Linear(configs.scalar_feature_dim, configs.d_model // 2)
 
         # 合并后的特征维度
         self.combined_feature_dim = configs.d_model
+
+        self.attention = FeatureAttention(self.combined_feature_dim, ratio=4)
 
         # 2. 引入 CycleNet 的核心：RecurrentCycle 模块
         # 注意 channel_size 是我们合并后的特征维度
@@ -151,19 +200,22 @@ class CycleNetForSOH(nn.Module):
         x_seq_flat = x_seq.view(x_seq.size(0), -1)
 
         seq_embedding = self.sequence_encoder(x_seq_flat)
+        # # x_seq 的形状 (batch, 1, 6) 正好是 nn.Conv1d 需要的格式
+        # seq_embedding = self.sequence_encoder(x_seq)
         scalar_embedding = self.scalar_encoder(x_scalar)
 
         # 合并成一个统一的特征向量
         combined_features = torch.cat((seq_embedding, scalar_embedding), dim=1)  # 形状: (batch, d_model)
 
+        # 将合并后的特征送入注意力层，得到加权后的特征
+        attended_features = self.attention(combined_features)
+
         # --- 2. CycleNet核心：分解周期性 ---
         # 计算在元周期中的位置
         cycle_index = cycle_number % self.configs.meta_cycle_len
 
-        # 从合并的特征中减去学习到的周期成分
-        # combined_features 需要增加一个维度以匹配 RecurrentCycle 的输出
-        # length=1 因为我们每个样本只有一个组合特征向量
-        decycled_features = combined_features - self.cycle_queue(cycle_index, length=1).squeeze(1)
+        # 从“加权后”的特征中减去学习到的周期成分
+        decycled_features = attended_features - self.cycle_queue(cycle_index, length=1).squeeze(1)
 
         # --- 3. 预测 ---
         # 将去除了周期性的特征送入预测头
@@ -246,6 +298,7 @@ def load_and_preprocess_data(config):
             # 3. 合并序列和标量数据
             final_df = pd.merge(sequence_df, scalar_df, on='循环号')
             final_df['battery_id'] = battery_id
+
             all_battery_data.append(final_df)
 
         except FileNotFoundError as e:
@@ -259,7 +312,7 @@ def load_and_preprocess_data(config):
         raise ValueError("未能成功加载任何电池数据。")
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
-    full_df = full_df[full_df['循环号'] <= config.cycle_amount].copy()
+
     # #容量归一化
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
@@ -267,20 +320,18 @@ def load_and_preprocess_data(config):
     target_col = '循环号'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
     # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
     # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
     # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
     #
     # # 从config中获取文件C的手动选择特征
     # features_from_C = config.features_from_C
-
+    #
     # # 合并来自文件B和文件C的特征列表
     # scalar_feature_cols = features_from_B + features_from_C
-
     scalar_feature_cols = config.features_from_C
-
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:

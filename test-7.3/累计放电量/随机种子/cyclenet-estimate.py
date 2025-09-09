@@ -7,13 +7,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
 import matplotlib.pyplot as plt
 import matplotlib
 import warnings
 import joblib
 from torch.cuda.amp import autocast, GradScaler
 from joblib import Parallel, delayed
+import shutil  # 导入 shutil 库用于文件操作
 
 
 # --- 1. 配置参数 (已修改) ---
@@ -23,29 +24,29 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/cyclenet/all'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
         # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
+        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24]
+        self.val_batteries = [5, 10, 13, 19]
+        self.test_batteries = [6, 12, 14, 20]
 
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
+        # self.train_batteries = [1, 2, 3, 4]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
 
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # self.train_batteries = [15, 17, 18, 19]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,31 +54,30 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
+            '3.3~3.6V充电时间(s)',
             # '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
-        self.sequence_feature_dim = 6
+        self.sequence_feature_dim = 7
 
         # --- 模型超参数 ---
-        self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
-        self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.meta_cycle_len = 7  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
+        self.sequence_length = 1  # A文件的序列长度
+        self.scalar_feature_dim = len(self.features_from_C)  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
         self.dropout = 0.2  # Dropout概率，0.1表示随机丢弃10%的神经元
         self.use_revin = False  # 是否使用可逆实例归一化
-        self.weight_decay = 0.0001  # 增加权重衰减，1e-4或1e-5是常用的初始值
-        self.cycle_amount = 150
+        self.weight_decay = 0.0001 # 增加权重衰减，1e-4或1e-5是常用的初始值
 
         # --- 训练参数 ---
         self.epochs = 500
-        self.batch_size = 256
-        self.learning_rate = 0.002
+        self.batch_size = 128
+        self.learning_rate = 0.001
         self.patience = 15
-        self.seed = 2025
+        self.seed = 2025  # 这个种子将不再被直接使用，而是作为参考
         self.mode = 'both'  # 可选 'train', 'validate', 'both'
 
         # --- 设备设置 ---
@@ -174,6 +174,7 @@ class CycleNetForSOH(nn.Module):
 
         return prediction
 
+
 # --- 4. 数据集定义 ---
 class BatteryMultimodalDataset(Dataset):
     def __init__(self, dataframe, sequence_col, scalar_cols, target_col):
@@ -205,6 +206,7 @@ class BatteryMultimodalDataset(Dataset):
 
         return x_seq, x_scalar, cycle_idx, y
 
+
 # --- 5. 数据加载和预处理 (完全重写) ---
 def load_and_preprocess_data(config):
     """加载来自三个文件夹的数据，进行合并、预处理和划分"""
@@ -215,7 +217,7 @@ def load_and_preprocess_data(config):
 
     for battery_id in sorted(list(set(all_ids))):
         try:
-            print(f"正在处理电池 {battery_id}...")
+            # print(f"正在处理电池 {battery_id}...")
             # 路径拼接
             path_a = os.path.join(config.path_A_sequence, f'relaxation_battery{battery_id}.csv')
             # path_b = os.path.join(config.path_B_scalar, f'EndVrlx_battery{battery_id}.csv')
@@ -239,7 +241,7 @@ def load_and_preprocess_data(config):
             feature_cols = [f'弛豫段电压{i}' for i in range(1, config.sequence_feature_dim + 1)]
             sequence_df = df_a.groupby('循环号')[feature_cols].apply(lambda x: x.values).reset_index(
                 name='voltage_sequence')
-            print("重命名之后的列名:", sequence_df.columns)  # 加上这行来查看
+            # print("重命名之后的列名:", sequence_df.columns)  # 加上这行来查看
             # 过滤掉长度不符合要求的序列
             sequence_df = sequence_df[sequence_df['voltage_sequence'].apply(len) == config.sequence_length]
 
@@ -259,37 +261,35 @@ def load_and_preprocess_data(config):
         raise ValueError("未能成功加载任何电池数据。")
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
-    full_df = full_df[full_df['循环号'] <= config.cycle_amount].copy()
+
     # #容量归一化
     # full_df['最大容量(Ah)'] = full_df['最大容量(Ah)'] / 3.5
     # print("已将'最大容量(Ah)'特征列的所有值除以3.5。")
 
-    target_col = '循环号'
+    target_col = '累计放电容量(Ah)'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
+    # # 从文件B中获取所有列名（除了'循环号'）作为标量特征
+    # # 我们需要先加载一个样本文件来获取列名
     # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
     # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
     # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
     #
     # # 从config中获取文件C的手动选择特征
     # features_from_C = config.features_from_C
-
+    #
     # # 合并来自文件B和文件C的特征列表
     # scalar_feature_cols = features_from_B + features_from_C
-
     scalar_feature_cols = config.features_from_C
-
     # 检查所有选择的特征是否存在于DataFrame中
     for col in scalar_feature_cols:
         if col not in full_df.columns:
-            raise ValueError(f"您手动选择的特征 '{col}' 不存在于加载的数据中。请检查 Config.features_from_C 中的拼写和列名。")
+            raise ValueError(
+                f"您手动选择的特征 '{col}' 不存在于加载的数据中。请检查 Config.features_from_C 中的拼写和列名。")
 
     # 更新config中的特征维度
     config.scalar_feature_dim = len(scalar_feature_cols)
-    print(f"已手动选择 {config.scalar_feature_dim} 个标量特征: {scalar_feature_cols}")
-
+    # print(f"已手动选择 {config.scalar_feature_dim} 个标量特征: {scalar_feature_cols}")
 
     # 划分数据集
     train_df = full_df[full_df['battery_id'].isin(config.train_batteries)].copy()
@@ -300,6 +300,7 @@ def load_and_preprocess_data(config):
     # 为序列数据和标量数据创建不同的缩放器
     scaler_seq = StandardScaler()
     scaler_scalar = StandardScaler()
+    scaler_target = StandardScaler()
 
     # 在训练集上拟合缩放器
     # 序列数据需要先展平才能fit
@@ -308,22 +309,27 @@ def load_and_preprocess_data(config):
 
     # 标量数据直接fit
     scaler_scalar.fit(train_df[scalar_feature_cols])
-
+    scaler_target.fit(train_df[[target_col]])  # <--- 新增：拟合目标值缩放器
     # 应用缩放
     for df in [train_df, val_df, test_df]:
         # x已经是(seq_len, 3)的形状，可以直接transform
         df[sequence_col] = df[sequence_col].apply(lambda x: scaler_seq.transform(x))
         # 缩放标量
         df.loc[:, scalar_feature_cols] = scaler_scalar.transform(df[scalar_feature_cols])
+        # 对目标值也进行transform
+        df.loc[:, [target_col]] = scaler_target.transform(df[[target_col]])
 
     # 创建Dataset
     train_dataset = BatteryMultimodalDataset(train_df, sequence_col, scalar_feature_cols, target_col)
     val_dataset = BatteryMultimodalDataset(val_df, sequence_col, scalar_feature_cols, target_col)
     test_dataset = BatteryMultimodalDataset(test_df, sequence_col, scalar_feature_cols, target_col)
 
-    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar}
+    # 将所有缩放器保存在一个字典中
+    scalers = {'sequence': scaler_seq, 'scalar': scaler_scalar, 'target': scaler_target}  # <--- 修改：将target_scaler也存起来
 
     return train_dataset, val_dataset, test_dataset, scalers
+
+
 # --- 6. 训练函数 (已修改) ---
 # def train_epoch(model, dataloader, optimizer, criterion, scheduler, device, grad_scaler):
 def train_epoch(model, dataloader, optimizer, criterion, device, grad_scaler):
@@ -358,6 +364,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, grad_scaler):
     # scheduler.step()
     return total_loss / len(dataloader)
 
+
 # --- 7. 验证/测试函数 (已修改) ---
 def evaluate(model, dataloader, criterion, device):
     model.eval()
@@ -380,23 +387,25 @@ def evaluate(model, dataloader, criterion, device):
             total_loss += loss.item()
             all_preds.append(outputs.cpu().numpy())
             all_labels.append(batch_y.cpu().numpy())
-            all_cycle_indices.append(batch_cycle_idx.cpu().numpy()) # <--- 新增：收集当前批次的循环号
+            all_cycle_indices.append(batch_cycle_idx.cpu().numpy())  # <--- 新增：收集当前批次的循环号
 
     avg_loss = total_loss / len(dataloader)
 
     # 拼接所有批次的预测和标签
     predictions = np.concatenate(all_preds).flatten()
     labels = np.concatenate(all_labels).flatten()
-    cycle_indices = np.concatenate(all_cycle_indices).flatten() # <--- 新增：将所有循环号拼接成一个数组
+    cycle_indices = np.concatenate(all_cycle_indices).flatten()  # <--- 新增：将所有循环号拼接成一个数组
 
     mse = mean_squared_error(labels, predictions)
+    mape = mean_absolute_percentage_error(labels, predictions)
     mae = mean_absolute_error(labels, predictions)
     rmse = np.sqrt(mse)
     r2 = r2_score(labels, predictions)
 
-    metrics = {'MSE': mse, 'MAE': mae, 'RMSE': rmse, 'R2': r2}
+    metrics = {'MSE': mse, 'MAPE': mape, 'MAE': mae, 'RMSE': rmse, 'R2': r2}
     # <--- 修改：在返回值中增加循环号
     return avg_loss, metrics, predictions, labels, cycle_indices
+
 
 # --- 8. 可视化和工具函数 (基本不变) ---
 def get_exp_tag(config):
@@ -417,7 +426,7 @@ def plot_results(labels, preds, title, save_path):
     plt.plot(preds, label='Predictions', marker='x', linestyle='--', markersize=4, alpha=0.8)
     plt.title(title, fontsize=16)
     plt.xlabel('Sample Index', fontsize=12)
-    plt.ylabel('Cycle Number', fontsize=12)
+    plt.ylabel('Cumulative Discharge Capacity (Ah)', fontsize=12)
     plt.legend()
     plt.grid(True)
     plt.savefig(save_path, dpi=1200)
@@ -439,8 +448,8 @@ def plot_diagonal_results(labels, preds, title, save_path):
     # 绘制y=x的完美预测线
     plt.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2, label='Perfect Prediction (y=x)')
 
-    plt.xlabel('True Cycle Number', fontsize=12)
-    plt.ylabel('Predicted Cycle Number', fontsize=12)
+    plt.xlabel('True Cumulative Discharge Capacity (Ah)', fontsize=12)  # <--- 修改
+    plt.ylabel('Predicted Cumulative Discharge Capacity (Ah)', fontsize=12)  # <--- 修改
     plt.title(title, fontsize=16)
     plt.legend()
     plt.grid(True)
@@ -453,127 +462,269 @@ def plot_diagonal_results(labels, preds, title, save_path):
     plt.savefig(save_path, dpi=1200)
     plt.close()
 
-# --- 9. 主执行函数 (已修改) ---
-# 文件: cyclenet2.0-predict.py
 
+# --- 9. 主执行函数 (已修改) ---
 def main():
     # 忽略一些不必要的警告
     warnings.filterwarnings('ignore')
     matplotlib.use('Agg')
     config = Config()
-    set_seed(config.seed)
 
-    exp_tag = get_exp_tag(config)
-    config.save_path = os.path.join(config.save_path, exp_tag)
+    # 确保主保存路径存在
     os.makedirs(config.save_path, exist_ok=True)
-    print(f"本次实验结果将保存到: {config.save_path}")
+    print(f"所有实验的总保存路径: {config.save_path}")
     print(f"使用设备: {config.device}")
 
-    try:
-        # load_and_preprocess_data 现在返回一个包含两个scaler的字典
-        train_dataset, val_dataset, test_dataset, scalers = load_and_preprocess_data(config)
-    except (FileNotFoundError, ValueError) as e:
-        print(f"数据加载失败: {e}")
-        return
-    # 保存scaler字典
-    joblib.dump(scalers, os.path.join(config.save_path, 'scalers.pkl'))
+    # --- 新增：为多次实验设置的变量 ---
+    num_runs = 5
+    all_runs_metrics = []
+    best_run_val_loss = float('inf')
+    best_run_dir = None
+    best_run_number = -1
+    all_runs_PER_BATTERY_metrics = []
 
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    print(
-        f"数据加载完成。训练集样本数: {len(train_dataset)}, 验证集样本数: {len(val_dataset)}, 测试集样本数: {len(test_dataset)}")
+    # --- 开始多次实验循环 ---
+    for run_number in range(1, num_runs + 1):
+        # --- 1. 设置当前轮的随机种子和保存路径 ---
+        current_seed = random.randint(0, 99999)
+        set_seed(current_seed)
 
-    model = CycleNetForSOH(config).to(config.device)
-    criterion = nn.MSELoss()
-    # optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
-    optimizer = optim.Adam(model.parameters(),
-                           lr=config.learning_rate,
-                           weight_decay=config.weight_decay)  # 增加权重衰减，1e-4或1e-5是常用的初始值
-    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6) #余弦退火
-    grad_scaler = GradScaler() if config.use_gpu and config.device.type == 'cuda' else None
+        run_save_path = os.path.join(config.save_path, f'run_{run_number}')
+        os.makedirs(run_save_path, exist_ok=True)
 
-    metrics_log = []
-    best_val_loss = float('inf')
-    epochs_no_improve = 0
+        print(f"\n{'=' * 30}")
+        print(f" 开始第 {run_number}/{num_runs} 次实验 | 随机种子: {current_seed} ")
+        print(f" 本次实验结果将保存到: {run_save_path}")
+        print(f"{'=' * 30}")
 
-    if config.mode in ['both', 'train']:
-        print("\n开始训练模型...")
-        for epoch in range(config.epochs):
-            # train_loss = train_epoch(model, train_loader, optimizer, criterion, scheduler, config.device, grad_scaler)
-            train_loss = train_epoch(model, train_loader, optimizer, criterion, config.device, grad_scaler)
-            val_loss, val_metrics, _, _, _ = evaluate(model, val_loader, criterion, config.device)
+        # --- 2. 数据加载和预处理 (每轮都一样，但为保持独立性放在循环内) ---
+        try:
+            train_dataset, val_dataset, test_dataset, scalers = load_and_preprocess_data(config)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"数据加载失败: {e}")
+            continue  # 如果数据加载失败，跳过此次运行
+
+        # 保存scaler字典到当前运行的文件夹
+        joblib.dump(scalers, os.path.join(run_save_path, 'scalers.pkl'))
+
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=8,
+                                  pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8,
+                                pin_memory=True)
+        test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8,
+                                 pin_memory=True)
+
+        print(f"数据加载完成。训练集: {len(train_dataset)}, 验证集: {len(val_dataset)}, 测试集: {len(test_dataset)}")
+
+        # --- 3. 模型初始化和训练 ---
+        model = CycleNetForSOH(config).to(config.device)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        grad_scaler = GradScaler() if config.use_gpu and config.device.type == 'cuda' else None
+
+        metrics_log = []
+        best_val_loss_this_run = float('inf')
+        epochs_no_improve = 0
+
+        if config.mode in ['both', 'train']:
+            print("\n开始训练模型...")
+            for epoch in range(config.epochs):
+                train_loss = train_epoch(model, train_loader, optimizer, criterion, config.device, grad_scaler)
+                val_loss, val_metrics, _, _, _ = evaluate(model, val_loader, criterion, config.device)
+                print(
+                    f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f} | 验证 R2: {val_metrics['R2']:.4f}")
+
+                log_entry = {'epoch': epoch + 1, 'train_loss': train_loss, 'val_loss': val_loss,
+                             **{'val_' + k: v for k, v in val_metrics.items()}}
+                metrics_log.append(log_entry)
+
+                if val_loss < best_val_loss_this_run:
+                    best_val_loss_this_run = val_loss
+                    # 模型保存在当前轮次的文件夹中
+                    torch.save(model.state_dict(), os.path.join(run_save_path, 'best_model.pth'))
+                    print(f"  - 验证损失降低，保存模型到 {os.path.join(run_save_path, 'best_model.pth')}")
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    if epochs_no_improve >= config.patience:
+                        print(f"\n连续 {config.patience} 个 epoch 验证损失没有改善，提前停止训练。")
+                        break
+            print("\n训练完成。")
+            metrics_df = pd.DataFrame(metrics_log)
+            metrics_df.to_csv(os.path.join(run_save_path, 'training_metrics_log.csv'), index=False)
+
+        # --- 4. 评估最佳模型 (已重构，支持按电池分别评估和绘图) ---
+        if config.mode in ['both', 'validate']:
+            print('\n加载本轮最佳模型进行最终评估...')
+            model_path = os.path.join(run_save_path, 'best_model.pth')
+            if not os.path.exists(model_path):
+                print(f"错误: 找不到已训练的模型 '{model_path}'。")
+                continue
+
+            model.load_state_dict(torch.load(model_path, map_location=config.device))
+            scalers = joblib.load(os.path.join(run_save_path, 'scalers.pkl'))
+            scaler_target = scalers['target']
+
+            # 评估整个测试集
+            _, _, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion,
+                                                                      config.device)
+
+            # 反归一化
+            test_preds_orig = scaler_target.inverse_transform(test_preds.reshape(-1, 1)).flatten()
+            test_labels_orig = scaler_target.inverse_transform(test_labels.reshape(-1, 1)).flatten()
+
+            # 这会钳制任何模型误预测的负值，使其归零。
+            test_preds_orig = np.clip(test_preds_orig, a_min=0.0, a_max=None)
+
+            # ---【核心修改】开始：针对每个测试电池分别计算指标和绘图 ---
+            print("\n--- 本轮评估结果 (按单电池) ---")
+
+            # 因为 test_loader 的 shuffle=False，预测顺序与 test_dataset.df 严格一致
+            # 我们可以直接从 test_dataset 中获取电池ID
+            eval_df = pd.DataFrame({
+                'battery_id': test_dataset.df['battery_id'].values,
+                'cycle': test_cycle_nums,
+                'true': test_labels_orig,
+                'pred': test_preds_orig
+            })
+
+            per_battery_metrics_list = []
+            for batt_id in config.test_batteries:
+                batt_df = eval_df[eval_df['battery_id'] == batt_id]
+                if batt_df.empty:
+                    print(f"  - 电池 {batt_id}: 未找到数据，跳过。")
+                    continue
+
+                batt_true = batt_df['true'].values
+                batt_pred = batt_df['pred'].values
+
+                # 1. 计算单独指标
+                batt_metrics_dict = {
+                    'Battery_ID': batt_id,
+                    'MAE': mean_absolute_error(batt_true, batt_pred),
+                    'MAPE': mean_absolute_percentage_error(batt_true, batt_pred),
+                    'MSE': mean_squared_error(batt_true, batt_pred),
+                    'RMSE': np.sqrt(mean_squared_error(batt_true, batt_pred)),
+                    'R2': r2_score(batt_true, batt_pred)
+                }
+                per_battery_metrics_list.append(batt_metrics_dict)
+                print(
+                    f"  - 电池 {batt_id}: MAE={batt_metrics_dict['MAE']:.6f}, RMSE={batt_metrics_dict['RMSE']:.6f}, R2={batt_metrics_dict['R2']:.4f}")
+                # ---【新增逻辑】开始：将本次的单独电池指标也添加到“跨实验汇总”的总列表中 ---
+                batt_metrics_with_run_info = batt_metrics_dict.copy()
+                batt_metrics_with_run_info['run'] = run_number
+                batt_metrics_with_run_info['seed'] = current_seed
+                all_runs_PER_BATTERY_metrics.append(batt_metrics_with_run_info)
+                # ---【新增逻辑】结束 ---
+
+                # 2. 绘制单独的曲线图
+                plot_results(batt_true, batt_pred,
+                             f'Run {run_number} Battery {batt_id}: True vs Predicted Capacity',
+                             os.path.join(run_save_path, f'test_plot_battery_{batt_id}.png'))
+
+                # 3. 绘制单独的对角图
+                plot_diagonal_results(batt_true, batt_pred,
+                                      f'Run {run_number} Battery {batt_id}: Diagonal Plot',
+                                      os.path.join(run_save_path, f'test_diagonal_plot_battery_{batt_id}.png'))
+
+            # 4. 保存每个电池的指标汇总
+            per_batt_df = pd.DataFrame(per_battery_metrics_list)
+            per_batt_df.to_csv(os.path.join(run_save_path, 'test_per_battery_metrics.csv'), index=False)
+            print(f"  -> 单独指标和图表已保存至: {run_save_path}")
+            # --- 【核心修改】结束 ---
+
+            # --- 评估结果 (所有测试电池汇总) ---
+            print("\n--- 本轮评估结果 (所有测试电池汇总) ---")
+            final_test_metrics = {
+                'MAE': mean_absolute_error(test_labels_orig, test_preds_orig),
+                'MAPE': mean_absolute_percentage_error(test_labels_orig, test_preds_orig),
+                'MSE': mean_squared_error(test_labels_orig, test_preds_orig),
+                'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)),
+                'R2': r2_score(test_labels_orig, test_preds_orig)
+            }
+            # 【新增】保存总体指标CSV
+            pd.DataFrame([final_test_metrics]).to_csv(os.path.join(run_save_path, 'test_overall_metrics.csv'),
+                                                      index=False)
+
+            # 记录本轮实验的总体指标 (用于5次run的对比)
+            current_run_summary = {'run': run_number, 'seed': current_seed, **final_test_metrics}
+            all_runs_metrics.append(current_run_summary)
+
             print(
-                f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f} | 验证 R2: {val_metrics['R2']:.4f}")
+                f"测试集(汇总): MSE={final_test_metrics['MSE']:.6f}, MAE={final_test_metrics['MAE']:.6f}, RMSE={final_test_metrics['RMSE']:.6f}, R2={final_test_metrics['R2']:.4f}")
 
-            log_entry = {'epoch': epoch + 1, 'train_loss': train_loss, 'val_loss': val_loss,
-                         **{'val_' + k: v for k, v in val_metrics.items()}}
-            metrics_log.append(log_entry)
+            # 保存本轮次的 *总体* 预测结果和图表
+            test_results_df = pd.DataFrame(
+                {'Original_Cycle_Index': test_cycle_nums, 'True_Capacity_Ah': test_labels_orig,
+                 'Predicted_Capacity_Ah': test_preds_orig})
+            test_results_df.to_csv(os.path.join(run_save_path, 'test_ALL_predictions.csv'), index=False)
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(model.state_dict(), os.path.join(config.save_path, f'best_model_{exp_tag}.pth'))
-                print(f"  - 验证损失降低，保存模型到 {os.path.join(config.save_path, f'best_model_{exp_tag}.pth')}")
-                epochs_no_improve = 0
-            else:
-                epochs_no_improve += 1
-                if epochs_no_improve >= config.patience:
-                    print(f"\n连续 {config.patience} 个 epoch 验证损失没有改善，提前停止训练。")
-                    break
-        print("\n训练完成。")
-        metrics_df = pd.DataFrame(metrics_log)
-        metrics_df.to_csv(os.path.join(config.save_path, f'training_metrics_log_{exp_tag}.csv'), index=False)
-        if config.mode == 'train':
-            return
+            # (注意：之前的总体绘图函数已被上面的循环内单独绘图替代，故注释掉)
+            # plot_results(test_labels_orig, test_preds_orig, ...)
+            # plot_diagonal_results(test_labels_orig, test_preds_orig, ...)
 
-    if config.mode in ['both', 'validate']:
-        print('\n加载最佳模型进行最终评估...')
-        model_path = os.path.join(config.save_path, f'best_model_{exp_tag}.pth')
-        if not os.path.exists(model_path):
-            print(f"错误: 找不到已训练的模型 '{model_path}'。请先在 'train' 或 'both' 模式下运行。")
-            return
+            print(f"本轮所有预测和图表已保存。")
 
-        model.load_state_dict(torch.load(model_path, map_location=config.device))
+            # --- 5. 检查是否为最佳轮次 ---
+            if best_val_loss_this_run < best_run_val_loss:
+                best_run_val_loss = best_val_loss_this_run
+                best_run_dir = run_save_path
+                best_run_number = run_number
+                print(f"*** 新的最佳表现！验证集损失: {best_val_loss_this_run:.6f} ***")
 
-        # <--- 修改：接收新增的返回值 cycle_nums
-        _, val_metrics, val_preds, val_labels, val_cycle_nums = evaluate(model, val_loader, criterion, config.device)
-        _, test_metrics, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion,
-                                                                             config.device)
+    # --- 循环结束后 ---
+    print(f"\n\n{'=' * 50}")
+    print(" 所有实验均已完成。")
+    print(f"{'=' * 50}")
 
-        # 由于目标值'最大容量(Ah)'没有被归一化，所以不需要反归一化，直接使用即可
-        print("\n--- 评估结果 ---")
-        final_metrics = pd.DataFrame([
-            {'set': 'validation', **val_metrics},
-            {'set': 'test', **test_metrics}
-        ])
-        final_metrics.to_csv(os.path.join(config.save_path, 'final_evaluation_metrics.csv'), index=False)
-        print(
-            f"最终验证集指标: MSE={val_metrics['MSE']:.6f}, MAE={val_metrics['MAE']:.6f}, RMSE={val_metrics['RMSE']:.6f}, R2={val_metrics['R2']:.4f}")
-        print(
-            f"最终测试集指标: MSE={test_metrics['MSE']:.6f}, MAE={test_metrics['MAE']:.6f}, RMSE={test_metrics['RMSE']:.6f}, R2={test_metrics['R2']:.4f}")
+    # 1. 保存所有轮次的指标汇总
+    if all_runs_metrics:
+        summary_df = pd.DataFrame(all_runs_metrics)
+        summary_path = os.path.join(config.save_path, 'all_runs_summary.csv')
+        summary_df.to_csv(summary_path, index=False)
+        print("\n--- 五次实验性能汇总 ---")
+        print(summary_df)
+        print(f"\n汇总指标已保存到: {summary_path}")
 
-        # <--- 修改：在创建DataFrame时加入'循环号'列
-        val_results_df = pd.DataFrame(
-            {'Original_Cycle_Index': val_cycle_nums, 'True_Cycle': val_labels, 'Predicted_Cycle': val_preds})
-        test_results_df = pd.DataFrame(
-            {'Original_Cycle_Index': test_cycle_nums, 'True_Cycle': test_labels, 'Predicted_Cycle': test_preds})
+    # 2. 将最佳轮次的结果复制到主目录
+    if best_run_dir:
+        print(f"\n表现最佳的实验是第 {best_run_number} 轮 (验证集损失最低: {best_run_val_loss:.6f})。")
+        print(f"正在将最佳结果从 {best_run_dir} 复制到主目录 {config.save_path} ...")
 
-        val_results_df.to_csv(os.path.join(config.save_path, f'validation_predictions_{exp_tag}.csv'), index=False)
-        test_results_df.to_csv(os.path.join(config.save_path, f'test_predictions_{exp_tag}.csv'), index=False)
-        print(f"\n验证集和测试集的预测值已保存。")
+        # 遍历最佳运行目录中的所有文件
+        for filename in os.listdir(best_run_dir):
+            source_file = os.path.join(best_run_dir, filename)
+            destination_file = os.path.join(config.save_path, filename)
+            if os.path.isfile(source_file):
+                shutil.copy2(source_file, destination_file)  # copy2 会同时复制元数据
 
-        plot_results(val_labels, val_preds, 'Validation Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'validation_plot_{exp_tag}.png'))
-        plot_results(test_labels, test_preds, 'Test Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'test_plot_{exp_tag}.png'))
-        print(f"结果对比图已保存。")
+        print("最佳结果复制完成。")
+    else:
+        print("未能确定最佳实验轮次。")
 
-        # --- 新增：绘制对角图 ---
-        plot_diagonal_results(val_labels, val_preds, 'Validation Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'validation_diagonal_plot_{exp_tag}.png'))
-        plot_diagonal_results(test_labels, test_preds, 'Test Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'test_diagonal_plot_{exp_tag}.png'))
-        print(f"对角图已保存。")
+    print("\n正在生成所有实验的“分电池”详细汇总报告...")
+    if all_runs_PER_BATTERY_metrics:
+        # 将收集到的所有分电池指标列表转换为DataFrame
+        per_batt_summary_df = pd.DataFrame(all_runs_PER_BATTERY_metrics)
+
+        # 调整列顺序，方便阅读
+        all_cols = list(per_batt_summary_df.columns)
+        # 定义核心列的理想顺序
+        core_cols = ['Battery_ID', 'run', 'seed', 'MAE', 'MAPE', 'MSE', 'RMSE', 'R2']
+        # 生成最终排序列（确保所有核心列在前，其他列在后）
+        ordered_cols = [col for col in core_cols if col in all_cols] + [col for col in all_cols if col not in core_cols]
+        per_batt_summary_df = per_batt_summary_df[ordered_cols]
+
+        # 按电池ID和运行次数排序
+        per_batt_summary_df = per_batt_summary_df.sort_values(by=['Battery_ID', 'run'])
+
+        # 保存为您想要的汇总文件
+        summary_path_per_batt = os.path.join(config.save_path, 'all_runs_per_battery_summary.csv')
+        per_batt_summary_df.to_csv(summary_path_per_batt, index=False)
+        print(f"“分电池”详细汇总报告已保存到: {summary_path_per_batt}")
+    else:
+        print("未能生成“分电池”详细汇总报告，因为没有收集到数据。")
+
 
 if __name__ == '__main__':
     main()

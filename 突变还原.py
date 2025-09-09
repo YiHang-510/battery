@@ -54,11 +54,15 @@ def correct_jumps_independently(input_filepath, output_filepath=None, jump_thres
                 if current_diff > jump_threshold:
                     jump_value = current_diff
 
-                    # 定义需要修正的范围：从当前突变点到该循环结束
-                    indices_to_correct = group_copy.loc[jump_index:].index
+                    # --- 新逻辑 ---
+                    # 步骤一：单独处理突变点本身
+                    extra_compensation = 0.0001
+                    group_copy.loc[jump_index, '弛豫段电压'] -= (jump_value + extra_compensation)
 
-                    # 对后续所有点减去这个突变值
-                    group_copy.loc[indices_to_correct, '弛豫段电压'] -= jump_value
+                    # 步骤二：处理突变点之后的所有点
+                    indices_to_correct_after = group_copy.loc[jump_index + 1:].index
+                    if not indices_to_correct_after.empty:
+                        group_copy.loc[indices_to_correct_after, '弛豫段电压'] -= jump_value + 0.0001
 
             # 将修正后的group_copy更新回主DataFrame
             df_corrected.loc[group_copy.index] = group_copy
@@ -71,7 +75,7 @@ def correct_jumps_independently(input_filepath, output_filepath=None, jump_thres
 # --- 如何运行 ---
 if __name__ == '__main__':
     # 1. 将您的CSV文件名填入下方
-    input_file = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval\relaxation_battery1.csv'
+    input_file = r'D:\任务归档\电池\研究\data\selected_feature\relaxation\Interval\relaxation_battery8.csv'
 
     # 2. 运行此脚本
     correct_jumps_independently(input_file)

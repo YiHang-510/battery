@@ -20,34 +20,34 @@ class Config:
     def __init__(self):
         # --- 路径设置 ---
         self.data_dir = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = r'/home/scuee_user06/myh/电池/data/expnet_result'
+        self.save_path = r'/home/scuee_user06/myh/电池/data/expnet_result/all'
 
         # --- 数据集划分 (核心修改点) ---
         # 在这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 13, 14, 15, 16, 19, 20, 21, 22]
-        # self.val_batteries = [5, 11, 17, 23]
-        # self.test_batteries = [6, 12, 18, 24]  # 假设这些文件存在
+        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10,15, 16, 17, 18, 21, 22, 23, 24]
+        self.val_batteries = [5, 11, 13, 19]
+        self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
 
         # self.train_batteries = [1, 2, 3, 4]
-        # self.val_batteries = [5]
-        # self.test_batteries = [6]  # 假设这些文件存在
+        # self.val_batteries = [6]
+        # self.test_batteries = [5]  # 假设这些文件存在
 
         # self.train_batteries = [7, 8, 9, 10]
         # self.val_batteries = [11]
         # self.test_batteries = [12]  # 假设这些文件存在
 
-        # self.train_batteries = [13, 14, 15, 16]
-        # self.val_batteries = [17]
-        # self.test_batteries = [18]  # 假设这些文件存在
+        # self.train_batteries = [15, 16, 17, 18]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]  # 假设这些文件存在
 
-        self.train_batteries = [19, 20, 21, 22]
-        self.val_batteries = [23]
-        self.test_batteries = [24]  # 假设这些文件存在
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]  # 假设这些文件存在
 
         # --- 模型和训练超参数 ---
         self.n_terms = 4  # ExpNet的项数
         self.epochs = 10000
-        self.learning_rate = 1e-2
+        self.learning_rate = 1e-3
         self.patience = 2000  # 用于早停
         self.nominal_capacity = 1  # 用于SOH归一化
 
@@ -85,7 +85,7 @@ def load_and_split_data(config):
             battery_id = int(match.group())
 
             fpath = os.path.join(config.data_dir, fname)
-            df = pd.read_csv(fpath, encoding='gbk')
+            df = pd.read_csv(fpath)
             df['battery_id'] = battery_id  # 添加电池ID列
             all_df_list.append(df)
         except Exception as e:
@@ -156,11 +156,11 @@ def plot_test_set_grid(df, test_batteries, nominal_capacity, save_path, ncols=2)
         pred_capacity = subset['pred_soh'] * nominal_capacity
 
         # 绘图
-        plt.plot(subset['循环号'], true_capacity, 'o', color='blue', linestyle='-', label='True Capacity', markersize=4, alpha=0.6)
-        plt.plot(subset['循环号'], pred_capacity, '-', color='red', linestyle='--', label='Predicted Capacity', linewidth=2, markersize=4)
+        plt.plot(subset['累计放电容量(Ah)'], true_capacity, 'o', color='blue', linestyle='-', label='True Capacity', markersize=4, alpha=0.6)
+        plt.plot(subset['累计放电容量(Ah)'], pred_capacity, '-', color='red', linestyle='--', label='Predicted Capacity', linewidth=2, markersize=4)
 
         plt.title(f'Test Set: True vs. Predicted Capacity (Battery {battery_id})', fontsize=16)
-        plt.xlabel('Cycle', fontsize=12)
+        plt.xlabel('Accumulated discharge capacity (Ah)', fontsize=12)
         plt.ylabel('Capacity (Ah)', fontsize=12)
         plt.legend()
         plt.grid(True)
@@ -185,11 +185,11 @@ def plot_test_set_grid(df, test_batteries, nominal_capacity, save_path, ncols=2)
             true_capacity = subset['soh'] * nominal_capacity
             pred_capacity = subset['pred_soh'] * nominal_capacity
 
-            ax.plot(subset['循环号'], true_capacity, 'o', color='blue', label='True Capacity', alpha=0.6)
-            ax.plot(subset['循环号'], pred_capacity, '-', color='red', label='Predicted Capacity', linewidth=2)
+            ax.plot(subset['累计放电容量(Ah)'], true_capacity, 'o', color='blue', label='True Capacity', alpha=0.6)
+            ax.plot(subset['累计放电容量(Ah)'], pred_capacity, '-', color='red', label='Predicted Capacity', linewidth=2)
 
             ax.set_title(f'Test Battery {battery_id}', fontsize=14)
-            ax.set_xlabel('Cycle', fontsize=10)
+            ax.set_xlabel('Accumulated discharge capacity (Ah)', fontsize=10)
             ax.set_ylabel('Capacity (Ah)', fontsize=10)
             ax.legend()
             ax.grid(True)
@@ -296,9 +296,9 @@ def main():
     train_df, val_df, test_df = load_and_split_data(config)
 
     # 创建Tensors
-    train_c = torch.tensor(train_df['循环号'].values, dtype=torch.float32, device=config.device)
+    train_c = torch.tensor(train_df['累计放电容量(Ah)'].values, dtype=torch.float32, device=config.device)
     train_soh = torch.tensor(train_df['soh'].values, dtype=torch.float32, device=config.device)
-    val_c = torch.tensor(val_df['循环号'].values, dtype=torch.float32, device=config.device)
+    val_c = torch.tensor(val_df['累计放电容量(Ah)'].values, dtype=torch.float32, device=config.device)
     val_soh = torch.tensor(val_df['soh'].values, dtype=torch.float32, device=config.device)
 
     # 初始化模型、损失函数和优化器
@@ -364,7 +364,7 @@ def main():
     model.load_state_dict(torch.load(os.path.join(config.save_path, 'best_expnet_model.pth')))
     model.eval()
 
-    test_c = torch.tensor(test_df['循环号'].values, dtype=torch.float32, device=config.device)
+    test_c = torch.tensor(test_df['累计放电容量(Ah)'].values, dtype=torch.float32, device=config.device)
 
     with torch.no_grad():
         test_pred_soh = model(test_c).cpu().numpy()

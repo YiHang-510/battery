@@ -23,29 +23,33 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'  # A文件: 弛豫段电压序列 (1200点/循环)
         # self.path_B_scalar = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/End'  # B文件: 弛豫末端电压 (1点/循环)
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'  # C文件: 其他特征和目标 (1行/循环)
-        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-forcyclenum-150/6'  # 保存模型、结果和图像的文件夹路径
+        self.save_path = '/home/scuee_user06/myh/电池/data/cyclenet_result-150mean/20'  # 保存模型、结果和图像的文件夹路径
 
         # --- 数据集划分 ---
-        # 这里手动分配电池编号
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 17, 19, 20, 21, 22]
-        # self.val_batteries = [5, 10, 16, 23]
-        # self.test_batteries = [6, 12, 18, 24]
-
-        self.train_batteries = [1, 2, 3, 4]
-        self.val_batteries = [5]
-        self.test_batteries = [6]
-
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
-
-        # self.train_batteries = [13, 14, 15, 17]
-        # self.val_batteries = [16]
-        # self.test_batteries = [18]
+        # 定义用于交叉验证的电池池
+        # self.cv_batteries = [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 18, 21, 22, 23, 24, 19]
+        # # 定义固定的测试集
+        # self.test_batteries = [5, 12, 14, 20]
         #
-        # self.train_batteries = [19, 20, 21, 22]
-        # self.val_batteries = [23]
-        # self.test_batteries = [24]
+        # # 定义用于交叉验证的电池池
+        # self.cv_batteries = [1, 2, 3, 4, 6]
+        # # 定义固定的测试集
+        # self.test_batteries = [5]
+        #
+        # 定义用于交叉验证的电池池
+        # self.cv_batteries = [7, 8, 9, 10, 11]
+        # # 定义固定的测试集
+        # self.test_batteries = [12]
+        #
+        # # 定义用于交叉验证的电池池
+        # self.cv_batteries = [13, 15, 16, 17, 18]
+        # # 定义固定的测试集
+        # self.test_batteries = [14]
+
+        # # 定义用于交叉验证的电池池
+        self.cv_batteries = [21, 22, 23, 24, 19]
+        # 定义固定的测试集
+        self.test_batteries = [20]
 
         self.features_from_C = [
             # 'ICA峰值位置(V)',
@@ -53,8 +57,8 @@ class Config:
             '恒压充电时间(s)',
             # '恒流与恒压时间比值',
             # '2.8~3.4V放电时间(s)',
-            '3.3~3.6V充电时间(s)'
-            # '弛豫末端电压'
+            '3.3~3.6V充电时间(s)',
+            '弛豫末端电压'
         ]
 
         # 文件A的输入特征维度 (例如，'弛豫段电压1'到'弛豫段电压6'就是6维)
@@ -63,7 +67,7 @@ class Config:
         # --- 模型超参数 ---
         self.meta_cycle_len = 6  # 定义一个元周期长度，比如假设电池每100个循环有一个宏观上的周期性变化
         self.sequence_length = 1 # A文件的序列长度 (弛豫段电压的点数)
-        self.scalar_feature_dim = len(self.features_from_C) # B和C文件合并后的标量特征数量 (请根据实际情况调整)
+        self.scalar_feature_dim = len(self.features_from_C) + 1  # B和C文件合并后的标量特征数量 (请根据实际情况调整)
         self.d_model = 256  # 隐藏层维度
         self.d_ff = 1024  # MLP编码器和预测头的中间层维度
         self.cycle_len = 2000  # 最大循环次数 (应大于任何电池的最大循环号)
@@ -223,12 +227,10 @@ def load_and_preprocess_data(config):
 
             # 加载数据
             df_a = pd.read_csv(path_a, sep=',')  # 文件A：序列
-            # df_b = pd.read_csv(path_b, sep=',')  # 文件B：标量1
             df_c = pd.read_csv(path_c, sep=',')  # 文件C：标量2 + 目标
 
             # 1. 合并标量特征
-            # 确保 '循环号' 是正确的合并键
-            # df_b.rename(columns=lambda x: x.strip(), inplace=True)
+            # 现在标量特征只来源于文件C
             df_c.rename(columns=lambda x: x.strip(), inplace=True)
             scalar_df = df_c  # 直接将df_c作为scalar_df
 
@@ -267,18 +269,7 @@ def load_and_preprocess_data(config):
     target_col = '循环号'
     sequence_col = 'voltage_sequence'
 
-    # 从文件B中获取所有列名（除了'循环号'）作为标量特征
-    # 我们需要先加载一个样本文件来获取列名
-    # sample_b_path = os.path.join(config.path_B_scalar, f'EndVrlx_battery{config.train_batteries[0]}.csv')
-    # sample_b_df = pd.read_csv(sample_b_path, sep=',', encoding='gbk')
-    # features_from_B = [col.strip() for col in sample_b_df.columns if col.strip() != '循环号']
-    #
-    # # 从config中获取文件C的手动选择特征
-    # features_from_C = config.features_from_C
-
-    # # 合并来自文件B和文件C的特征列表
-    # scalar_feature_cols = features_from_B + features_from_C
-
+    # 由于不再使用文件B，直接从config中获取文件C的特征列表
     scalar_feature_cols = config.features_from_C
 
     # 检查所有选择的特征是否存在于DataFrame中
@@ -457,123 +448,216 @@ def plot_diagonal_results(labels, preds, title, save_path):
 # 文件: cyclenet2.0-predict.py
 
 def main():
-    # 忽略一些不必要的警告
+    # --- 外部设置 ---
     warnings.filterwarnings('ignore')
     matplotlib.use('Agg')
     config = Config()
     set_seed(config.seed)
 
-    exp_tag = get_exp_tag(config)
-    config.save_path = os.path.join(config.save_path, exp_tag)
-    os.makedirs(config.save_path, exist_ok=True)
-    print(f"本次实验结果将保存到: {config.save_path}")
+    # 创建一个总的实验根目录
+    base_save_path = config.save_path
+    os.makedirs(base_save_path, exist_ok=True)
+    print(f"所有交叉验证结果将保存在根目录: {base_save_path}")
     print(f"使用设备: {config.device}")
 
-    try:
-        # load_and_preprocess_data 现在返回一个包含两个scaler的字典
-        train_dataset, val_dataset, test_dataset, scalers = load_and_preprocess_data(config)
-    except (FileNotFoundError, ValueError) as e:
-        print(f"数据加载失败: {e}")
-        return
-    # 保存scaler字典
-    joblib.dump(scalers, os.path.join(config.save_path, 'scalers.pkl'))
+    # --- 修改：初始化列表以存储所有折的指标、预测值和真实值 ---
+    all_folds_test_metrics = []
+    all_folds_test_preds = []
+    all_folds_test_labels = []
 
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    print(
-        f"数据加载完成。训练集样本数: {len(train_dataset)}, 验证集样本数: {len(val_dataset)}, 测试集样本数: {len(test_dataset)}")
+    # --- 新增：为验证集创建等效列表 ---
+    all_folds_val_metrics = []
+    all_folds_val_preds = []
+    all_folds_val_labels = []
 
-    model = CycleNetForSOH(config).to(config.device)
-    criterion = nn.MSELoss()
-    # optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
-    optimizer = optim.Adam(model.parameters(),
-                           lr=config.learning_rate,
-                           weight_decay=config.weight_decay)  # 增加权重衰减，1e-4或1e-5是常用的初始值
-    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6) #余弦退火
-    grad_scaler = GradScaler() if config.use_gpu and config.device.type == 'cuda' else None
+    # --- K折交叉验证循环 ---
+    cv_pool = config.cv_batteries
+    for i, val_battery_id in enumerate(cv_pool):
+        fold_num = i + 1
+        print(f"\n{'=' * 20} FOLD {fold_num}/{len(cv_pool)} {'=' * 20}")
 
-    metrics_log = []
-    best_val_loss = float('inf')
-    epochs_no_improve = 0
+        # --- 1. 动态设置当前折的训练集和验证集 ---
+        config.val_batteries = [val_battery_id]
+        config.train_batteries = [b_id for b_id in cv_pool if b_id != val_battery_id]
 
-    if config.mode in ['both', 'train']:
+        print(f"当前折验证集: {config.val_batteries}")
+        print(f"当前折训练集: {config.train_batteries}")
+        print(f"固定测试集: {config.test_batteries}")
+
+        # --- 2. 为当前折创建独立的保存路径 ---
+        exp_tag = get_exp_tag(config)
+        fold_save_path = os.path.join(base_save_path, f'fold_{fold_num}_{exp_tag}')
+        os.makedirs(fold_save_path, exist_ok=True)
+        print(f"本折结果保存至: {fold_save_path}")
+
+        # --- 3. 加载和预处理数据 ---
+        try:
+            train_dataset, val_dataset, test_dataset, scalers = load_and_preprocess_data(config)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"数据加载失败: {e}")
+            continue
+
+        joblib.dump(scalers, os.path.join(fold_save_path, 'scalers.pkl'))
+
+        train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True, num_workers=8,
+                                  pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8,
+                                pin_memory=True)
+        test_loader = DataLoader(test_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8,
+                                 pin_memory=True)
+
+        # --- 4. 训练模型 ---
+        model = CycleNetForSOH(config).to(config.device)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+        grad_scaler = GradScaler() if config.use_gpu and config.device.type == 'cuda' else None
+
+        best_val_loss = float('inf')
+        epochs_no_improve = 0
+
         print("\n开始训练模型...")
         for epoch in range(config.epochs):
-            # train_loss = train_epoch(model, train_loader, optimizer, criterion, scheduler, config.device, grad_scaler)
             train_loss = train_epoch(model, train_loader, optimizer, criterion, config.device, grad_scaler)
-            val_loss, val_metrics, _, _, _ = evaluate(model, val_loader, criterion, config.device)
-            print(
-                f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f} | 验证 R2: {val_metrics['R2']:.4f}")
-
-            log_entry = {'epoch': epoch + 1, 'train_loss': train_loss, 'val_loss': val_loss,
-                         **{'val_' + k: v for k, v in val_metrics.items()}}
-            metrics_log.append(log_entry)
+            val_loss, _, _, _, _ = evaluate(model, val_loader, criterion, config.device)
+            print(f"Epoch {epoch + 1}/{config.epochs} | 训练损失: {train_loss:.6f} | 验证损失: {val_loss:.6f}")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(model.state_dict(), os.path.join(config.save_path, f'best_model_{exp_tag}.pth'))
-                print(f"  - 验证损失降低，保存模型到 {os.path.join(config.save_path, f'best_model_{exp_tag}.pth')}")
+                torch.save(model.state_dict(), os.path.join(fold_save_path, f'best_model.pth'))
                 epochs_no_improve = 0
             else:
                 epochs_no_improve += 1
                 if epochs_no_improve >= config.patience:
                     print(f"\n连续 {config.patience} 个 epoch 验证损失没有改善，提前停止训练。")
                     break
-        print("\n训练完成。")
-        metrics_df = pd.DataFrame(metrics_log)
-        metrics_df.to_csv(os.path.join(config.save_path, f'training_metrics_log_{exp_tag}.csv'), index=False)
-        if config.mode == 'train':
-            return
 
-    if config.mode in ['both', 'validate']:
-        print('\n加载最佳模型进行最终评估...')
-        model_path = os.path.join(config.save_path, f'best_model_{exp_tag}.pth')
+        # --- 5. 评估、保存和收集结果 ---
+        print('\n加载本折最佳模型进行最终评估...')
+        model_path = os.path.join(fold_save_path, 'best_model.pth')
         if not os.path.exists(model_path):
-            print(f"错误: 找不到已训练的模型 '{model_path}'。请先在 'train' 或 'both' 模式下运行。")
-            return
+            print(f"错误: 找不到已训练的模型 '{model_path}'。")
+            continue
 
         model.load_state_dict(torch.load(model_path, map_location=config.device))
 
-        # <--- 修改：接收新增的返回值 cycle_nums
         _, val_metrics, val_preds, val_labels, val_cycle_nums = evaluate(model, val_loader, criterion, config.device)
         _, test_metrics, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion,
                                                                              config.device)
 
-        # 由于目标值'最大容量(Ah)'没有被归一化，所以不需要反归一化，直接使用即可
-        print("\n--- 评估结果 ---")
-        final_metrics = pd.DataFrame([
-            {'set': 'validation', **val_metrics},
-            {'set': 'test', **test_metrics}
-        ])
-        final_metrics.to_csv(os.path.join(config.save_path, 'final_evaluation_metrics.csv'), index=False)
-        print(
-            f"最终验证集指标: MSE={val_metrics['MSE']:.6f}, MAE={val_metrics['MAE']:.6f}, RMSE={val_metrics['RMSE']:.6f}, R2={val_metrics['R2']:.4f}")
-        print(
-            f"最终测试集指标: MSE={test_metrics['MSE']:.6f}, MAE={test_metrics['MAE']:.6f}, RMSE={test_metrics['RMSE']:.6f}, R2={test_metrics['R2']:.4f}")
+        # --- 修改：收集本折的测试指标、预测值和真实值 ---
+        all_folds_test_metrics.append(test_metrics)
+        all_folds_test_preds.append(test_preds)
+        all_folds_test_labels.append(test_labels)
 
-        # <--- 修改：在创建DataFrame时加入'循环号'列
+        # --- 新增：收集本折的验证指标、预测值和真实值 ---
+        all_folds_val_metrics.append(val_metrics)
+        all_folds_val_preds.append(val_preds)
+        all_folds_val_labels.append(val_labels)
+
+        print(f"\n--- FOLD {fold_num} 评估结果 ---")
+        print(f"验证集指标: R2={val_metrics['R2']:.4f}")
+        print(f"固定测试集指标: R2={test_metrics['R2']:.4f}")
+
+        # 保存本折的详细预测CSV文件
         val_results_df = pd.DataFrame(
             {'Original_Cycle_Index': val_cycle_nums, 'True_Cycle': val_labels, 'Predicted_Cycle': val_preds})
         test_results_df = pd.DataFrame(
             {'Original_Cycle_Index': test_cycle_nums, 'True_Cycle': test_labels, 'Predicted_Cycle': test_preds})
+        val_results_df.to_csv(os.path.join(fold_save_path, 'validation_predictions.csv'), index=False)
+        test_results_df.to_csv(os.path.join(fold_save_path, 'test_predictions.csv'), index=False)
 
-        val_results_df.to_csv(os.path.join(config.save_path, f'validation_predictions_{exp_tag}.csv'), index=False)
-        test_results_df.to_csv(os.path.join(config.save_path, f'test_predictions_{exp_tag}.csv'), index=False)
-        print(f"\n验证集和测试集的预测值已保存。")
+        # 绘制本折的图表
+        plot_diagonal_results(val_labels, val_preds, f'Fold {fold_num} Validation Set: Diagonal Plot',
+                              os.path.join(fold_save_path, 'validation_diagonal_plot.png'))
+        plot_diagonal_results(test_labels, test_preds, f'Fold {fold_num} Test Set: Diagonal Plot',
+                              os.path.join(fold_save_path, 'test_diagonal_plot.png'))
+    # --- 交叉验证循环结束后，进行最终的汇总、保存和绘图 ---
+    if not all_folds_test_metrics:
+        print("\n没有一折成功完成，无法计算最终结果。")
+        return
 
-        plot_results(val_labels, val_preds, 'Validation Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'validation_plot_{exp_tag}.png'))
-        plot_results(test_labels, test_preds, 'Test Set: True vs. Predicted Capacity',
-                     os.path.join(config.save_path, f'test_plot_{exp_tag}.png'))
-        print(f"结果对比图已保存。")
+    print(f"\n{'=' * 20} 交叉验证最终汇总 {'=' * 20}")
+    base_save_path = config.save_path  # 获取根保存路径
 
-        # --- 新增：绘制对角图 ---
-        plot_diagonal_results(val_labels, val_preds, 'Validation Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'validation_diagonal_plot_{exp_tag}.png'))
-        plot_diagonal_results(test_labels, test_preds, 'Test Set: Diagonal Plot',
-                              os.path.join(config.save_path, f'test_diagonal_plot_{exp_tag}.png'))
-        print(f"对角图已保存。")
+    # --- 1. 验证集结果汇总 (通过拼接) ---
+    print("\n--- 正在汇总所有验证集结果 (拼接)... ---")
+    # 拼接所有验证集的预测和标签
+    agg_val_preds = np.concatenate(all_folds_val_preds)
+    agg_val_labels = np.concatenate(all_folds_val_labels)
+
+    # 基于拼接后的结果计算总体验证指标
+    final_val_mse = mean_squared_error(agg_val_labels, agg_val_preds)
+    final_val_mae = mean_absolute_error(agg_val_labels, agg_val_preds)
+    final_val_rmse = np.sqrt(final_val_mse)
+    final_val_r2 = r2_score(agg_val_labels, agg_val_preds)
+    final_val_metrics = {'MSE': final_val_mse, 'MAE': final_val_mae, 'RMSE': final_val_rmse, 'R2': final_val_r2}
+
+    print("总体验证集指标 (所有折叠拼接后):")
+    print(pd.Series(final_val_metrics))
+
+    # 保存拼接后的验证集预测结果
+    agg_val_df = pd.DataFrame({'True_Cycle': agg_val_labels, 'Predicted_Cycle': agg_val_preds})
+    agg_val_csv_path = os.path.join(base_save_path, 'final_aggregated_validation_predictions.csv')
+    agg_val_df.to_csv(agg_val_csv_path, index=False)
+    print(f"拼接后的验证集预测已保存至: {agg_val_csv_path}")
+
+    # 绘制拼接后的验证集图表
+    plot_diagonal_results(agg_val_labels, agg_val_preds, 'Aggregated Validation Set: Diagonal Plot (All Folds)',
+                          os.path.join(base_save_path, 'final_aggregated_validation_diagonal_plot.png'))
+    print("已保存拼接后的验证集图表。")
+
+    # --- 2. 测试集结果汇总 (通过平均预测) ---
+    print("\n--- 正在汇总固定测试集结果 (平均预测)... ---")
+    # 对所有折的预测值求平均
+    # all_folds_test_preds 是一个列表，其中每个元素是当前折的预测数组
+    # 使用 np.mean(axis=0) 来计算每个样本点的平均预测值
+    mean_test_preds = np.mean(np.array(all_folds_test_preds), axis=0)
+
+    # 因为测试集是固定的，所以所有折的真实标签都一样，取第一个即可
+    final_test_labels = all_folds_test_labels[0]
+
+    # 基于平均预测计算最终测试指标
+    final_test_mse = mean_squared_error(final_test_labels, mean_test_preds)
+    final_test_mae = mean_absolute_error(final_test_labels, mean_test_preds)
+    final_test_rmse = np.sqrt(final_test_mse)
+    final_test_r2 = r2_score(final_test_labels, mean_test_preds)
+    final_test_metrics = {'MSE': final_test_mse, 'MAE': final_test_mae, 'RMSE': final_test_rmse,
+                          'R2': final_test_r2}
+
+    print("\n最终测试集指标 (基于平均预测):")
+    print(pd.Series(final_test_metrics))
+
+    # 保存平均后的测试集预测结果
+    mean_test_df = pd.DataFrame({'True_Cycle': final_test_labels, 'Predicted_Cycle': mean_test_preds})
+    mean_test_csv_path = os.path.join(base_save_path, 'final_mean_test_predictions.csv')
+    mean_test_df.to_csv(mean_test_csv_path, index=False)
+    print(f"平均后的测试集预测已保存至: {mean_test_csv_path}")
+
+    # 绘制基于平均预测的测试集图表
+    plot_diagonal_results(final_test_labels, mean_test_preds, 'Test Set with Mean Prediction: Diagonal Plot',
+                          os.path.join(base_save_path, 'final_mean_test_diagonal_plot.png'))
+    print("已保存基于平均预测的测试集图表。")
+
+    # --- 3. 保存每个折叠在测试集上的详细指标 ---
+    print("\n--- 正在保存各折在固定测试集上的指标详情... ---")
+    metrics_df = pd.DataFrame(all_folds_test_metrics)
+    # 计算均值和标准差以供参考
+    mean_metrics = metrics_df.mean()
+    std_metrics = metrics_df.std()
+
+    # 创建一个汇总DataFrame
+    summary_df = metrics_df.copy()
+    summary_df.loc['mean'] = mean_metrics
+    summary_df.loc['std'] = std_metrics
+    summary_df.index = [f'Fold_{i + 1}' for i in range(len(all_folds_test_metrics))] + ['mean', 'std']
+
+    summary_path = os.path.join(base_save_path, 'final_cv_test_metrics_summary.csv')
+    summary_df.to_csv(summary_path)
+
+    print("各折在固定测试集上的指标详情:")
+    print(summary_df.to_string())
+    print(f"\n交叉验证的详细指标及均值已保存到: {summary_path}")
+
 
 if __name__ == '__main__':
     main()
