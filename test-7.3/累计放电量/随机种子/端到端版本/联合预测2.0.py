@@ -41,7 +41,7 @@ class Config:
     # 路径（按需修改）
     path_A_sequence: str = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
     path_C_features: str  = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/20'
+    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/12'
 
     # # 数据集划分（按你的电池编号修改）
     # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
@@ -52,17 +52,17 @@ class Config:
     # val_batteries:   list = field(default_factory=lambda: [5])
     # test_batteries:  list = field(default_factory=lambda: [6])
 
-    # train_batteries: list = field(default_factory=lambda: [7, 8, 9, 11])
-    # val_batteries:   list = field(default_factory=lambda: [10])
-    # test_batteries:  list = field(default_factory=lambda: [12])
+    train_batteries: list = field(default_factory=lambda: [7, 8, 9, 11])
+    val_batteries:   list = field(default_factory=lambda: [10])
+    test_batteries:  list = field(default_factory=lambda: [12])
     #
     # train_batteries: list = field(default_factory=lambda: [15, 13, 18, 14])
     # val_batteries:   list = field(default_factory=lambda: [17])
     # test_batteries:  list = field(default_factory=lambda: [16])
-    #
-    train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
-    val_batteries:   list = field(default_factory=lambda: [19])
-    test_batteries:  list = field(default_factory=lambda: [20])
+    # #
+    # train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
+    # val_batteries:   list = field(default_factory=lambda: [19])
+    # test_batteries:  list = field(default_factory=lambda: [20])
 
     # 特征列（来自C路统计特征）
     features_from_C: list = field(default_factory=lambda: [
@@ -458,16 +458,25 @@ def plot_scatter(y_true, y_pred, title, path):
 
 @torch.no_grad()
 def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q,
+                                           start_plot_idx=None, # 新增参数：从哪个点开始画预测曲线
                                            title_suffix="teacher_forced_degradation_curve"):
     """
-    【修改版】绘制 Teacher-Forcing 模式下的 Q-vs-C 退化曲线，并标记交点坐标。
+    【修改版】绘制 Teacher-Forcing 模式下的 Q-vs-C 退化曲线，
+    并从指定点开始绘制预测值，用竖线分隔。
     """
     sub = df_bat.copy().sort_values('cycle').reset_index(drop=True)
     if len(sub) == 0 or not has_Q:
         return
 
+    # 如果未指定起点，就默认使用窗口长度L作为起点
+    if start_plot_idx is None:
+        start_plot_idx = cfg.window_L
+
+    # 确保起点不越界
+    start_plot_idx = max(0, min(start_plot_idx, len(sub) - 1))
+
     device = cfg.device
-    rol_threshold = 2.6  # 设定阈值
+    rol_threshold = 2.6
 
     # 准备 ExpNet 的输入 (t时刻的状态)
     C_t_scaled = sub['C_t'].values.astype(np.float32)
@@ -486,7 +495,7 @@ def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q,
     C_t1_pred_orig = scalers['C'].inverse_transform(out[:, 0].detach().cpu().numpy().reshape(-1, 1)).ravel()
     Q_t1_pred_orig = scalers['Q'].inverse_transform(out[:, 1].detach().cpu().numpy().reshape(-1, 1)).ravel()
 
-    # --- 寻找交点 ---
+    # --- 寻找交点 (这部分逻辑不变) ---
     def find_intersection(x_coords, y_coords, y_threshold):
         cross_indices = np.where(y_coords <= y_threshold)[0]
         if len(cross_indices) == 0: return None
@@ -506,18 +515,26 @@ def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q,
     battery_id = sub['battery_id'].iloc[0]
     plt.figure(figsize=(9, 6))
 
-    plt.plot(C_t1_true_orig, Q_t1_true_orig, markersize=4, linewidth=1.5, label='Ground Truth Degradation Curve')
-    plt.plot(C_t1_pred_orig, Q_t1_pred_orig, markersize=4, linewidth=1.5, alpha=0.8,
-             label='Predicted Degradation Curve (Single-Step)')
-    plt.axhline(y=rol_threshold, color='green', linestyle='--', label='ROL Threshold')
+    # 1. 绘制完整的真实数据曲线
+    plt.plot(C_t1_true_orig, Q_t1_true_orig, markersize=4, linewidth=2, label='Ground Truth Degradation Curve', color='black')
 
-    # --- 修正区域：绘制交点并添加文本标签 ---
+    # 2. 从 start_plot_idx 开始绘制预测曲线
+    plt.plot(C_t1_pred_orig[start_plot_idx:], Q_t1_pred_orig[start_plot_idx:],
+             markersize=4, linewidth=1.5, alpha=0.9,
+             label='Predicted Degradation Curve',  color='blue')
+
+    # 3. 在起点处绘制垂直线
+    split_point_x = C_t1_true_orig[start_plot_idx]
+    plt.axvline(x=split_point_x, color='green', linestyle='--', label=f'Prediction Start (Cycle {sub.loc[start_plot_idx, "cycle"]})')
+
+    plt.axhline(y=rol_threshold, color='red', linestyle='--', label='ROL Threshold')
+
+    # 绘制交点
     if true_intersect:
-        plt.scatter(true_intersect[0], true_intersect[1], c='red', marker='o', s=80, zorder=5,
+        plt.scatter(true_intersect[0], true_intersect[1], c='blue', marker='o', s=80, zorder=5,
                     label=f'True Intersection({true_intersect[0]:.1f})')
-
     if pred_intersect:
-        plt.scatter(pred_intersect[0], pred_intersect[1], c='red', marker='x', s=80, zorder=5,
+        plt.scatter(pred_intersect[0], pred_intersect[1], c='blue', marker='x', s=80, zorder=5,
                     label=f'Predicted Intersection({pred_intersect[0]:.1f})')
 
     plt.xlabel('Cumulative Discharge Capacity (Ah)')
@@ -530,7 +547,7 @@ def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q,
     out_path = os.path.join(cfg.save_path, f"degradation_curve_{title_suffix}_bat{battery_id}.png")
     plt.savefig(out_path, dpi=300)
     plt.close()
-    print(f"[SAVE] Correctly plotted Q-vs-C curve with annotations to: {out_path}")
+    print(f"[SAVE] Plotted split Q-vs-C curve with annotations to: {out_path}")
 
 @torch.no_grad()
 def rul_by_Q(df_bat, cfg, scalers, E_net, P_net, soh_thr=0.8, q0=None, start_idx=None, max_h=5000,
@@ -692,7 +709,16 @@ def main():
 
     # 每个测试电池画时序
     for bid in sorted(test_df['battery_id'].unique()):
-        plot_series_teacher_forced_for_battery(test_df[test_df['battery_id']==bid], cfg, scalers, P_net, has_Q)
+        # 调用修改后的函数，start_plot_idx 可以根据需要调整，
+        # 默认为 cfg.window_L 已经很合适了。
+        plot_series_teacher_forced_for_battery(
+            test_df[test_df['battery_id']==bid],
+            cfg,
+            scalers,
+            P_net,
+            has_Q,
+            start_plot_idx=cfg.window_L # 指定从窗口长度处开始绘制
+        )
 
     print(f"\nArtifacts saved in: {cfg.save_path}")
 
