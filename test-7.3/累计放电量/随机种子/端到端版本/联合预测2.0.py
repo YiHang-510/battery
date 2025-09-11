@@ -41,12 +41,12 @@ class Config:
     # 路径（按需修改）
     path_A_sequence: str = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
     path_C_features: str  = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/all'
+    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/20'
 
-    # 数据集划分（按你的电池编号修改）
-    train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 15, 17, 18, 19, 21, 22, 23, 24])
-    val_batteries:   list = field(default_factory=lambda: [5, 10, 13, 19])
-    test_batteries:  list = field(default_factory=lambda: [6, 12, 14, 20])
+    # # 数据集划分（按你的电池编号修改）
+    # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
+    # val_batteries:   list = field(default_factory=lambda: [5, 10, 17, 19])
+    # test_batteries:  list = field(default_factory=lambda: [6, 12, 16, 20])
 
     # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4])
     # val_batteries:   list = field(default_factory=lambda: [5])
@@ -56,13 +56,13 @@ class Config:
     # val_batteries:   list = field(default_factory=lambda: [10])
     # test_batteries:  list = field(default_factory=lambda: [12])
     #
-    # train_batteries: list = field(default_factory=lambda: [15, 17, 18, 19])
-    # val_batteries:   list = field(default_factory=lambda: [13])
-    # test_batteries:  list = field(default_factory=lambda: [14])
+    # train_batteries: list = field(default_factory=lambda: [15, 13, 18, 14])
+    # val_batteries:   list = field(default_factory=lambda: [17])
+    # test_batteries:  list = field(default_factory=lambda: [16])
     #
-    # train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
-    # val_batteries:   list = field(default_factory=lambda: [19])
-    # test_batteries:  list = field(default_factory=lambda: [20])
+    train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
+    val_batteries:   list = field(default_factory=lambda: [19])
+    test_batteries:  list = field(default_factory=lambda: [20])
 
     # 特征列（来自C路统计特征）
     features_from_C: list = field(default_factory=lambda: [
@@ -76,7 +76,7 @@ class Config:
     col_Q: str           = '最大容量(Ah)'   # 若无该列也能训练（仅做 C 预测与 RUL-by-C）
 
     # —— 窗口相关 ——
-    window_L: int = 10                 # 历史窗口长度 L（连续点个数）
+    window_L: int = 10                # 历史窗口长度 L（连续点个数）
     make_windows_stride: int = 1       # 滑动窗步长（全覆盖用 1）
     random_windows_per_epoch: int = 0  # >0 则训练集每 epoch 按电芯随机采样 N 个 t
 
@@ -94,14 +94,14 @@ class Config:
 
     # ExpNetMono
     exp_n_terms: int = 32
-    use_q_t_as_input: bool = True      # 若 True 且有 Q 列，则用 Q_t 作为输入，输出 ΔQ
+    use_q_t_as_input: bool = False      # 若 True 且有 Q 列，则用 Q_t 作为输入，输出 ΔQ
 
     # 训练
     epochs: int = 300
     batch_size: int = 128
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
-    patience: int = 40
+    patience: int = 15
     seed: int = 2025
 
     # 训练策略
@@ -431,17 +431,17 @@ def evaluate(E_net, P_net, loader, cfg: Config, scalers, has_Q: bool):
     metrics = {
         'EstC_t_MAE': mean_absolute_error(_invC(Ct_true), _invC(Ct_pred)),
         'EstC_t_RMSE': np.sqrt(mean_squared_error(_invC(Ct_true), _invC(Ct_pred))),
-        'EstC_t_R2': r2_score(_invC(Ct_true), _invC(Ct_pred)),
+        'EstC_t_R2': r2_score(_invC(Ct_true), _invC(Ct_pred)),  # <--- 已恢复
         'PredC_t1_MAE': mean_absolute_error(_invC(Ct1_true), _invC(Ct1_pred)),
         'PredC_t1_RMSE': np.sqrt(mean_squared_error(_invC(Ct1_true), _invC(Ct1_pred))),
-        'PredC_t1_R2': r2_score(_invC(Ct1_true), _invC(Ct1_pred)),
+        'PredC_t1_R2': r2_score(_invC(Ct1_true), _invC(Ct1_pred)),  # <--- 已恢复
     }
-    if has_Q and len(all['Qt1_pred'])>0:
-        Qt1_pred = _cat(all['Qt1_pred']); Qt1_true = _cat(all['Qt1_true'])
+    if has_Q and len(all['Qt1_pred']) > 0:
+        Qt1_pred, Qt1_true = _cat(all['Qt1_pred']), _cat(all['Qt1_true'])
         metrics.update({
             'PredQ_t1_MAE': mean_absolute_error(_invQ(Qt1_true), _invQ(Qt1_pred)),
             'PredQ_t1_RMSE': np.sqrt(mean_squared_error(_invQ(Qt1_true), _invQ(Qt1_pred))),
-            'PredQ_t1_R2': r2_score(_invQ(Qt1_true), _invQ(Qt1_pred)),
+            'PredQ_t1_R2': r2_score(_invQ(Qt1_true), _invQ(Qt1_pred)),  # <--- 已恢复
         })
     return total / max(1,len(loader)), metrics
 
@@ -457,42 +457,80 @@ def plot_scatter(y_true, y_pred, title, path):
     plt.axis('equal'); plt.xlim(mn, mx); plt.ylim(mn, mx); plt.grid(True); plt.tight_layout(); plt.savefig(path, dpi=300); plt.close()
 
 @torch.no_grad()
-def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q, title_suffix="teacher_forced"):
+def plot_series_teacher_forced_for_battery(df_bat, cfg, scalers, P_net, has_Q,
+                                           title_suffix="teacher_forced_degradation_curve"):
+    """
+    【修改版】绘制 Teacher-Forcing 模式下的 Q-vs-C 退化曲线，并标记交点坐标。
+    """
     sub = df_bat.copy().sort_values('cycle').reset_index(drop=True)
-    if len(sub)==0: return
+    if len(sub) == 0 or not has_Q:
+        return
+
     device = cfg.device
-    cycles_next = (sub['cycle'].values + 1).astype(int)
+    rol_threshold = 2.6  # 设定阈值
 
-    C_t_scaled  = sub['C_t'].values.astype(np.float32)
-    C_t1_scaled = sub['C_t1'].values.astype(np.float32)
-    Q_t_scaled  = sub['Q_t'].values.astype(np.float32) if ('Q_t' in sub.columns) else None
+    # 准备 ExpNet 的输入 (t时刻的状态)
+    C_t_scaled = sub['C_t'].values.astype(np.float32)
+    q_t_scaled_in = None
+    if has_Q and 'Q_t' in sub.columns and cfg.use_q_t_as_input:
+        q_t_scaled_in = sub['Q_t'].values.astype(np.float32)
 
-    C_in = torch.tensor(C_t_scaled, device=device).view(-1,1)
-    q_in = torch.tensor(Q_t_scaled, device=device).view(-1,1) if (Q_t_scaled is not None and cfg.use_q_t_as_input) else None
-    out  = P_net(C_in, q_in)
+    C_in = torch.tensor(C_t_scaled, device=device).view(-1, 1)
+    q_in = torch.tensor(q_t_scaled_in, device=device).view(-1, 1) if q_t_scaled_in is not None else None
 
-    C_pred = scalers['C'].inverse_transform(out[:,0].detach().cpu().numpy().reshape(-1,1)).ravel()
-    C_true = scalers['C'].inverse_transform(C_t1_scaled.reshape(-1,1)).ravel()
+    out = P_net(C_in, q_in)
 
-    plt.figure(figsize=(9,4))
-    plt.plot(cycles_next, C_true, linewidth=1.5, label='True C_{t+1}')
-    plt.plot(cycles_next, C_pred, linewidth=1.5, label='Pred C_{t+1}')
-    plt.xlabel('Cycle'); plt.ylabel('Cumulative Discharge (Ah)')
-    plt.title(f"C time series ({title_suffix})"); plt.grid(True); plt.legend()
-    out_path = os.path.join(cfg.save_path, f"series_C_{title_suffix}_bat{sub['battery_id'].iloc[0]}.png")
-    plt.tight_layout(); plt.savefig(out_path, dpi=300); plt.close(); print(f"[SAVE] {out_path}")
+    # --- 反归一化 ---
+    C_t1_true_orig = scalers['C'].inverse_transform(sub['C_t1'].values.reshape(-1, 1)).ravel()
+    Q_t1_true_orig = scalers['Q'].inverse_transform(sub['Q_t1'].values.reshape(-1, 1)).ravel()
+    C_t1_pred_orig = scalers['C'].inverse_transform(out[:, 0].detach().cpu().numpy().reshape(-1, 1)).ravel()
+    Q_t1_pred_orig = scalers['Q'].inverse_transform(out[:, 1].detach().cpu().numpy().reshape(-1, 1)).ravel()
 
-    if has_Q and out.size(1)>1:
-        Q_t1_scaled = sub['Q_t1'].values.astype(np.float32)
-        Q_pred = scalers['Q'].inverse_transform(out[:,1].detach().cpu().numpy().reshape(-1,1)).ravel()
-        Q_true = scalers['Q'].inverse_transform(Q_t1_scaled.reshape(-1,1)).ravel()
-        plt.figure(figsize=(9,4))
-        plt.plot(cycles_next, Q_true, linewidth=1.5, label='True Q_{t+1}')
-        plt.plot(cycles_next, Q_pred, linewidth=1.5, label='Pred Q_{t+1}')
-        plt.xlabel('Cycle'); plt.ylabel('Capacity / SOH')
-        plt.title(f"Q/SOH time series ({title_suffix})"); plt.grid(True); plt.legend()
-        out_path = os.path.join(cfg.save_path, f"series_Q_{title_suffix}_bat{sub['battery_id'].iloc[0]}.png")
-        plt.tight_layout(); plt.savefig(out_path, dpi=300); plt.close(); print(f"[SAVE] {out_path}")
+    # --- 寻找交点 ---
+    def find_intersection(x_coords, y_coords, y_threshold):
+        cross_indices = np.where(y_coords <= y_threshold)[0]
+        if len(cross_indices) == 0: return None
+        first_cross_idx = cross_indices[0]
+        if first_cross_idx == 0: return x_coords[0], y_coords[0]
+
+        x1, y1 = x_coords[first_cross_idx - 1], y_coords[first_cross_idx - 1]
+        x2, y2 = x_coords[first_cross_idx], y_coords[first_cross_idx]
+        if (y1 - y2) == 0: return x2, y_threshold
+        x_intersect = x1 + (x2 - x1) * (y_threshold - y1) / (y2 - y1)
+        return x_intersect, y_threshold
+
+    true_intersect = find_intersection(C_t1_true_orig, Q_t1_true_orig, rol_threshold)
+    pred_intersect = find_intersection(C_t1_pred_orig, Q_t1_pred_orig, rol_threshold)
+
+    # --- 绘图 ---
+    battery_id = sub['battery_id'].iloc[0]
+    plt.figure(figsize=(9, 6))
+
+    plt.plot(C_t1_true_orig, Q_t1_true_orig, markersize=4, linewidth=1.5, label='Ground Truth Degradation Curve')
+    plt.plot(C_t1_pred_orig, Q_t1_pred_orig, markersize=4, linewidth=1.5, alpha=0.8,
+             label='Predicted Degradation Curve (Single-Step)')
+    plt.axhline(y=rol_threshold, color='green', linestyle='--', label='ROL Threshold')
+
+    # --- 修正区域：绘制交点并添加文本标签 ---
+    if true_intersect:
+        plt.scatter(true_intersect[0], true_intersect[1], c='red', marker='o', s=80, zorder=5,
+                    label=f'True Intersection({true_intersect[0]:.1f})')
+
+    if pred_intersect:
+        plt.scatter(pred_intersect[0], pred_intersect[1], c='red', marker='x', s=80, zorder=5,
+                    label=f'Predicted Intersection({pred_intersect[0]:.1f})')
+
+    plt.xlabel('Cumulative Discharge Capacity (Ah)')
+    plt.ylabel('Capacity / SOH (Ah)')
+    plt.title(f'Battery {battery_id}: Capacity vs. Cumulative Discharge ({title_suffix})')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+
+    out_path = os.path.join(cfg.save_path, f"degradation_curve_{title_suffix}_bat{battery_id}.png")
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"[SAVE] Correctly plotted Q-vs-C curve with annotations to: {out_path}")
 
 @torch.no_grad()
 def rul_by_Q(df_bat, cfg, scalers, E_net, P_net, soh_thr=0.8, q0=None, start_idx=None, max_h=5000,
@@ -567,7 +605,8 @@ def rul_by_Q(df_bat, cfg, scalers, E_net, P_net, soh_thr=0.8, q0=None, start_idx
         'cycles': np.array(cycles, dtype=int),
         'Q_pred': Q_preds,
         'C_pred': scalers['C'].inverse_transform(C_preds.reshape(-1,1)).ravel(),
-        'Q_thresh': q_thresh
+        'Q_thresh': q_thresh,
+        'start_cycle': cyc0
     }
     return RUL, (cyc0 + (RUL if RUL is not None else np.nan)), series
 
