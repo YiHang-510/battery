@@ -41,20 +41,20 @@ class Config:
     # 路径（按需修改）
     path_A_sequence: str = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
     path_C_features: str  = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/12'
+    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/all'
 
     # # 数据集划分（按你的电池编号修改）
-    # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
-    # val_batteries:   list = field(default_factory=lambda: [5, 10, 17, 19])
-    # test_batteries:  list = field(default_factory=lambda: [6, 12, 16, 20])
+    train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
+    val_batteries:   list = field(default_factory=lambda: [5, 10, 17, 19])
+    test_batteries:  list = field(default_factory=lambda: [6, 12, 16, 20])
 
     # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4])
     # val_batteries:   list = field(default_factory=lambda: [5])
     # test_batteries:  list = field(default_factory=lambda: [6])
 
-    train_batteries: list = field(default_factory=lambda: [7, 8, 9, 11])
-    val_batteries:   list = field(default_factory=lambda: [10])
-    test_batteries:  list = field(default_factory=lambda: [12])
+    # train_batteries: list = field(default_factory=lambda: [7, 8, 9, 11])
+    # val_batteries:   list = field(default_factory=lambda: [10])
+    # test_batteries:  list = field(default_factory=lambda: [12])
     #
     # train_batteries: list = field(default_factory=lambda: [15, 13, 18, 14])
     # val_batteries:   list = field(default_factory=lambda: [17])
