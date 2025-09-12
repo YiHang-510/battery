@@ -87,6 +87,7 @@ class Config:
     use_cyclenet: bool = False
     meta_cycle_len: int = 7            # 只有在 use_cyclenet=True 时生效
 
+
     # 模型结构
     d_model: int = 256
     d_ff: int = 1024
