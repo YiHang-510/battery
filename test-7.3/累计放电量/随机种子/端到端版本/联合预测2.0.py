@@ -76,7 +76,7 @@ class Config:
     col_Q: str           = '最大容量(Ah)'   # 若无该列也能训练（仅做 C 预测与 RUL-by-C）
 
     # —— 窗口相关 ——
-    window_L: int = 10                # 历史窗口长度 L（连续点个数）
+    window_L: int = 50                # 历史窗口长度 L（连续点个数）
     make_windows_stride: int = 1       # 滑动窗步长（全覆盖用 1）
     random_windows_per_epoch: int = 0  # >0 则训练集每 epoch 按电芯随机采样 N 个 t
 
@@ -93,15 +93,15 @@ class Config:
     dropout: float = 0.2
 
     # ExpNetMono
-    exp_n_terms: int = 32
+    exp_n_terms: int = 64
     use_q_t_as_input: bool = False      # 若 True 且有 Q 列，则用 Q_t 作为输入，输出 ΔQ
 
     # 训练
-    epochs: int = 300
+    epochs: int = 500
     batch_size: int = 128
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
-    patience: int = 15
+    patience: int = 10
     seed: int = 2025
 
     # 训练策略
