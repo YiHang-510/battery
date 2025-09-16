@@ -10,7 +10,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import matplotlib
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
-from Model import ExpNetKnee
+from Model import ExpNetTR
 import shutil  # 导入 shutil 库用于文件操作
 import torch.nn.functional as F
 
@@ -22,7 +22,7 @@ class Config:
     def __init__(self):
         # --- 路径设置 ---
         self.data_dir = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = r'/home/scuee_user06/myh/电池/result-累计放电容量/result-expnetKnee-128/20'
+        self.save_path = r'/home/scuee_user06/myh/电池/result-累计放电容量/result-expnetTR-128/20'
 
         # --- 数据集划分 (核心修改点) ---
         # 在这里手动分配电池编号
@@ -342,7 +342,7 @@ def main():
         val_soh = torch.tensor(val_df['soh'].values, dtype=torch.float32, device=config.device)
 
         # --- 3. 初始化模型、损失函数和优化器 ---
-        model = ExpNetKnee(n_terms=config.n_terms).to(config.device)
+        model = ExpNetTR(n_terms=config.n_terms).to(config.device)
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs)
