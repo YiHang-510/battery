@@ -10,8 +10,9 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import matplotlib
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
-from Model import ExpNet
+from Model import ExpNetKnee
 import shutil  # 导入 shutil 库用于文件操作
+import torch.nn.functional as F
 
 matplotlib.use('Agg')
 
@@ -21,35 +22,35 @@ class Config:
     def __init__(self):
         # --- 路径设置 ---
         self.data_dir = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = r'/home/scuee_user06/myh/电池/result-累计放电容量/result-expnet-16/all'
+        self.save_path = r'/home/scuee_user06/myh/电池/result-累计放电容量/result-expnetKnee-128/20'
 
         # --- 数据集划分 (核心修改点) ---
         # 在这里手动分配电池编号
-        self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
-        self.val_batteries = [5, 11, 13, 19]
-        self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
-        # #
+        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
+        # self.val_batteries = [5, 11, 13, 19]
+        # self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
+
         # self.train_batteries = [1, 2, 3, 4]
         # self.val_batteries = [5]
-        # self.test_batteries = [6]  # 假设这些文件存在
-        #
-        # self.train_batteries = [7, 8, 9, 10]
-        # self.val_batteries = [11]
-        # self.test_batteries = [12]  # 假设这些文件存在
-        #
+        # self.test_batteries = [6]
+
+        # self.train_batteries = [7, 8, 9, 11]
+        # self.val_batteries = [10]
+        # self.test_batteries = [12]
+
         # self.train_batteries = [15, 16, 17, 18]
         # self.val_batteries = [13]
-        # self.test_batteries = [14]  # 假设这些文件存在
-
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]  # 假设这些文件存在
+        # self.test_batteries = [14]
+        #
+        self.train_batteries = [21, 22, 23, 24]
+        self.val_batteries = [19]
+        self.test_batteries = [20]
 
         # --- 模型和训练超参数 ---
-        self.n_terms = 16  # ExpNet的项数
+        self.n_terms = 512  # ExpNet的项数
         self.epochs = 20000
-        self.learning_rate = 5e-3
-        self.patience = 4000  # 用于早停
+        self.learning_rate = 1e-3
+        self.patience = 2000  # 用于早停
         self.nominal_capacity = 3.5  # 用于SOH归一化
 
         # --- 其他设置 ---
@@ -341,7 +342,7 @@ def main():
         val_soh = torch.tensor(val_df['soh'].values, dtype=torch.float32, device=config.device)
 
         # --- 3. 初始化模型、损失函数和优化器 ---
-        model = ExpNet(n_terms=config.n_terms).to(config.device)
+        model = ExpNetKnee(n_terms=config.n_terms).to(config.device)
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs)
