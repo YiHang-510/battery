@@ -28,11 +28,11 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
         # --- 修改: 更新保存路径以反映新模型 ---
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/CNN-LSTM-TPA/4'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/CNN-LSTM-TPA/20'
 
-        self.train_batteries = [1, 2, 3, 6]
-        self.val_batteries = [5]
-        self.test_batteries = [4]
+        # self.train_batteries = [1, 2, 3, 6]
+        # self.val_batteries = [5]
+        # self.test_batteries = [4]
         #
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
@@ -42,9 +42,9 @@ class Config:
         # self.val_batteries = [13]
         # self.test_batteries = [14]
 
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
+        self.train_batteries = [21, 22, 23, 24]
+        self.val_batteries = [19]
+        self.test_batteries = [20]
 
         self.features_from_C = [
             '恒压充电时间(s)',
@@ -497,19 +497,30 @@ def main():
                 batt_df = eval_df[eval_df['battery_id'] == batt_id]
                 if batt_df.empty: continue
                 batt_true, batt_pred = batt_df['true'].values, batt_df['pred'].values
-                batt_metrics_dict = {'Battery_ID': batt_id, 'MAE': mean_absolute_error(batt_true, batt_pred), 'RMSE': np.sqrt(mean_squared_error(batt_true, batt_pred)), 'R2': r2_score(batt_true, batt_pred)}
+                batt_metrics_dict = {'Battery_ID': batt_id, 'MAE': mean_absolute_error(batt_true, batt_pred),
+                                     'MAPE': mean_absolute_percentage_error(batt_true, batt_pred),
+                                     'MSE': mean_squared_error(batt_true, batt_pred),
+                                     'RMSE': np.sqrt(mean_squared_error(batt_true, batt_pred)),
+                                     'R2': r2_score(batt_true, batt_pred)}
                 per_battery_metrics_list.append(batt_metrics_dict)
-                print(f"  - 电池 {batt_id}: MAE={batt_metrics_dict['MAE']:.4f}, RMSE={batt_metrics_dict['RMSE']:.4f}, R2={batt_metrics_dict['R2']:.4f}")
+                print(
+                    f"  - 电池 {batt_id}: MAE={batt_metrics_dict['MAE']:.6f}, RMSE={batt_metrics_dict['RMSE']:.6f}, R2={batt_metrics_dict['R2']:.4f}")
                 all_runs_PER_BATTERY_metrics.append({**batt_metrics_dict, 'run': run_number, 'seed': current_seed})
                 plot_results(batt_true, batt_pred, f'Battery {batt_id}: True vs Predicted Capacity', os.path.join(run_save_path, f'test_plot_battery_{batt_id}.png'))
                 plot_diagonal_results(batt_true, batt_pred, f'Battery {batt_id}: Diagonal Plot', os.path.join(run_save_path, f'test_diagonal_plot_battery_{batt_id}.png'))
             pd.DataFrame(per_battery_metrics_list).to_csv(os.path.join(run_save_path, 'test_per_battery_metrics.csv'), index=False)
 
             print("\n--- 本轮评估结果 (所有测试电池汇总) ---")
-            final_test_metrics = {'MAE': mean_absolute_error(test_labels_orig, test_preds_orig), 'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)), 'R2': r2_score(test_labels_orig, test_preds_orig)}
-            pd.DataFrame([final_test_metrics]).to_csv(os.path.join(run_save_path, 'test_overall_metrics.csv'), index=False)
+            final_test_metrics = {'MAE': mean_absolute_error(test_labels_orig, test_preds_orig),
+                                  'MAPE': mean_absolute_percentage_error(test_labels_orig, test_preds_orig),
+                                  'MSE': mean_squared_error(test_labels_orig, test_preds_orig),
+                                  'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)),
+                                  'R2': r2_score(test_labels_orig, test_preds_orig)}
+            pd.DataFrame([final_test_metrics]).to_csv(os.path.join(run_save_path, 'test_overall_metrics.csv'),
+                                                      index=False)
             all_runs_metrics.append({'run': run_number, 'seed': current_seed, **final_test_metrics})
-            print(f"测试集(汇总): MAE={final_test_metrics['MAE']:.4f}, RMSE={final_test_metrics['RMSE']:.4f}, R2={final_test_metrics['R2']:.4f}")
+            print(
+                f"测试集(汇总): MSE={final_test_metrics['MSE']:.6f}, MAE={final_test_metrics['MAE']:.6f}, RMSE={final_test_metrics['RMSE']:.6f}, R2={final_test_metrics['R2']:.4f}")
 
             if best_val_loss_this_run < best_run_val_loss:
                 best_run_val_loss, best_run_dir, best_run_number = best_val_loss_this_run, run_save_path, run_number
@@ -520,7 +531,7 @@ def main():
         summary_df = pd.DataFrame(all_runs_metrics)
         summary_path = os.path.join(config.save_path, 'all_runs_summary.csv')
         summary_df.to_csv(summary_path, index=False)
-        print("\n--- 五次实验性能汇总 ---\n", summary_df.drop(columns=['run', 'seed']).mean())
+        print("\n--- 五次实验性能汇总 ---\n", summary_df)
         print(f"\n汇总指标已保存到: {summary_path}")
 
     if best_run_dir:

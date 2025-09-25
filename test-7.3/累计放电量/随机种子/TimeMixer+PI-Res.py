@@ -26,15 +26,27 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/TM_PIRes-123/20'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/TM_PIRes/4'
 
         # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
         # self.val_batteries = [5, 11, 13, 19]
-        # self.test_batteries = [6, 12, 14, 20]
+        # self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
 
-        self.train_batteries = [21, 22, 23, 24]
-        self.val_batteries = [19]
-        self.test_batteries = [20]
+        self.train_batteries = [1, 2, 3, 6]
+        self.val_batteries = [5]
+        self.test_batteries = [4]
+
+        # self.train_batteries = [7, 8, 9, 11]
+        # self.val_batteries = [10]
+        # self.test_batteries = [12]
+
+        # self.train_batteries = [15, 16, 17, 18]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
+        #
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
 
         self.features_from_C = [
             '恒压充电时间(s)',
@@ -58,7 +70,7 @@ class Config:
         self.batch_size = 128
         self.learning_rate = 0.001
         self.weight_decay = 0.0001
-        self.patience = 15
+        self.patience = 10
         self.seed = 2025
         self.mode = 'both'
 
@@ -253,7 +265,7 @@ class TM_PIRes(nn.Module):
         self.res_head = nn.Sequential(
             nn.Linear(d, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, cfg.n_basis)
         )
-        self.out_act = F.softplus
+        # 移除了 self.out_act = F.softplus
 
     def forward(self, v: torch.Tensor, s: torch.Tensor, t_norm: torch.Tensor) -> Tuple[torch.Tensor, dict]:
         x = self.embed(v)
@@ -264,12 +276,18 @@ class TM_PIRes(nn.Module):
         B_I = self.basis.eval(t_norm)
 
         c0_pos = F.softplus(self.c0)
-        m = (B_I @ c0_pos) + F.softplus(self.b0)
+
+        # --- 修改点 1: 解除对 b0 的非负约束 ---
+        # 原代码: m = (B_I @ c0_pos) + F.softplus(self.b0)
+        m = (B_I @ c0_pos) + self.b0  # 新代码
 
         c_h = F.softplus(self.res_head(h))
         R = (B_I * c_h).sum(dim=-1)
 
-        Q = self.out_act(m + R)
+        # --- 修改点 2: 移除最终的 softplus 输出激活 ---
+        # 原代码: Q = self.out_act(m + R)
+        Q = m + R  # 新代码
+
         return Q, {"c_h": c_h}
 
 
@@ -330,6 +348,7 @@ def load_and_preprocess_data(config):
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
     target_col = '累计放电容量(Ah)'
+    # target_col = '最大容量(Ah)'
     sequence_col = 'voltage_sequence'
     scalar_feature_cols = config.features_from_C
 
@@ -570,8 +589,10 @@ def main():
             _, _, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion, config.device,
                                                                       config)
 
-            test_preds_orig = scaler_target.inverse_transform(test_preds.reshape(-1, 1)).flatten()
-            test_labels_orig = scaler_target.inverse_transform(test_labels.reshape(-1, 1)).flatten()
+            # test_preds_orig = scaler_target.inverse_transform(test_preds.reshape(-1, 1)).flatten()
+            # test_labels_orig = scaler_target.inverse_transform(test_labels.reshape(-1, 1)).flatten()
+            test_preds_orig = test_preds
+            test_labels_orig = test_labels
             test_preds_orig = np.clip(test_preds_orig, a_min=0.0, a_max=None)
 
             print("\n--- 本轮评估结果 (按单电池) ---")

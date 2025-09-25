@@ -31,7 +31,7 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
         # --- 修改: 更新保存路径以反映新模型 ---
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/RCMHCRE_PIRes-最大容量/4'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/RCMHCRE/4'
 
         self.train_batteries = [1, 2, 3, 6]
         self.val_batteries = [5]

@@ -25,23 +25,23 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
         # --- 修改: 更新保存路径以反映新模型 ---
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/消融-ExpNetTR-最大容量/12'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/消融-ExpNetTR-最大容量/20'
 
         # self.train_batteries = [1, 2, 3, 6]
         # self.val_batteries = [5]
         # self.test_batteries = [4]
 
-        self.train_batteries = [7, 8, 9, 11]
-        self.val_batteries = [10]
-        self.test_batteries = [12]
+        # self.train_batteries = [7, 8, 9, 11]
+        # self.val_batteries = [10]
+        # self.test_batteries = [12]
 
         # self.train_batteries = [15, 16, 17, 18]
         # self.val_batteries = [13]
         # self.test_batteries = [14]
 
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
+        self.train_batteries = [21, 22, 23, 24]
+        self.val_batteries = [19]
+        self.test_batteries = [20]
 
         # --- 模型无关的数据加载参数 (保留以兼容数据加载器) ---
         self.features_from_C = ['恒压充电时间(s)', '3.3~3.6V充电时间(s)']
@@ -287,7 +287,11 @@ def evaluate(model, dataloader, criterion, device, config):
     predictions = np.concatenate(all_preds).flatten()
     labels = np.concatenate(all_labels).flatten()
     cycle_indices = np.concatenate(all_cycle_indices).flatten()
-    metrics = {'MSE': mean_squared_error(labels, predictions), 'RMSE': np.sqrt(mean_squared_error(labels, predictions)), 'MAE': mean_absolute_error(labels, predictions), 'R2': r2_score(labels, predictions)}
+    metrics = {'MSE': mean_squared_error(labels, predictions),
+               'MAPE': mean_absolute_percentage_error(labels, predictions),
+               'MAE': mean_absolute_error(labels, predictions),
+               'RMSE': np.sqrt(mean_squared_error(labels, predictions)),
+               'R2': r2_score(labels, predictions)}
     return avg_loss, metrics, predictions, labels, cycle_indices
 
 
@@ -343,7 +347,7 @@ def main():
     print(f"所有实验的总保存路径: {config.save_path}")
 
     num_runs = 5
-    all_runs_metrics = []
+    all_runs_metrics, all_runs_PER_BATTERY_metrics = [], []
 
     for run_number in range(1, num_runs + 1):
         current_seed = random.randint(0, 99999)
@@ -390,20 +394,46 @@ def main():
                     break
 
         print('\n加载本轮最佳模型进行最终评估...')
-        model.load_state_dict(torch.load(os.path.join(run_save_path, 'best_model.pth')))
-        _, final_test_metrics, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion, config.device, config)
+        model.load_state_dict(torch.load(os.path.join(run_save_path, 'best_model.pth'), map_location=config.device))
+        _, _, test_preds, test_labels, test_cycle_nums = evaluate(model, test_loader, criterion, config.device, config)
 
+        # --- 反归一化 ---
         test_preds_orig = test_preds * config.cap_norm
         test_labels_orig = test_labels * config.cap_norm
+        test_preds_orig = np.clip(test_preds_orig, a_min=0.0, a_max=None)
+
+        print("\n--- 本轮评估结果 (按单电池) ---")
+        eval_df = pd.DataFrame(
+            {'battery_id': test_dataset.df['battery_id'].values, 'cycle': test_cycle_nums, 'true': test_labels_orig,
+             'pred': test_preds_orig})
+        per_battery_metrics_list = []
+        for batt_id in sorted(list(set(config.test_batteries))):
+            batt_df = eval_df[eval_df['battery_id'] == batt_id]
+            if batt_df.empty: continue
+            batt_true, batt_pred = batt_df['true'].values, batt_df['pred'].values
+            batt_metrics_dict = {'Battery_ID': batt_id, 'MAE': mean_absolute_error(batt_true, batt_pred),
+                                 'MAPE': mean_absolute_percentage_error(batt_true, batt_pred),
+                                 'MSE': mean_squared_error(batt_true, batt_pred),
+                                 'RMSE': np.sqrt(mean_squared_error(batt_true, batt_pred)),
+                                 'R2': r2_score(batt_true, batt_pred)}
+            per_battery_metrics_list.append(batt_metrics_dict)
+            print(
+                f"  - 电池 {batt_id}: MAE={batt_metrics_dict['MAE']:.6f}, RMSE={batt_metrics_dict['RMSE']:.6f}, R2={batt_metrics_dict['R2']:.4f}")
+            all_runs_PER_BATTERY_metrics.append({**batt_metrics_dict, 'run': run_number, 'seed': current_seed})
+        pd.DataFrame(per_battery_metrics_list).to_csv(os.path.join(run_save_path, 'test_per_battery_metrics.csv'),
+                                                      index=False)
 
         print("\n--- 本轮评估结果 (所有测试电池汇总) ---")
-        final_metrics_orig = {
-            'MAE': mean_absolute_error(test_labels_orig, test_preds_orig),
-            'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)),
-            'R2': r2_score(test_labels_orig, test_preds_orig)
-        }
-        all_runs_metrics.append({'run': run_number, 'seed': current_seed, **final_metrics_orig})
-        print(f"测试集(汇总): MAE={final_metrics_orig['MAE']:.4f}, RMSE={final_metrics_orig['RMSE']:.4f}, R2={final_metrics_orig['R2']:.4f}")
+        final_test_metrics = {'MAE': mean_absolute_error(test_labels_orig, test_preds_orig),
+                              'MAPE': mean_absolute_percentage_error(test_labels_orig, test_preds_orig),
+                              'MSE': mean_squared_error(test_labels_orig, test_preds_orig),
+                              'RMSE': np.sqrt(mean_squared_error(test_labels_orig, test_preds_orig)),
+                              'R2': r2_score(test_labels_orig, test_preds_orig)}
+        pd.DataFrame([final_test_metrics]).to_csv(os.path.join(run_save_path, 'test_overall_metrics.csv'),
+                                                  index=False)
+        all_runs_metrics.append({'run': run_number, 'seed': current_seed, **final_test_metrics})
+        print(
+            f"测试集(汇总): MSE={final_test_metrics['MSE']:.6f}, MAE={final_test_metrics['MAE']:.6f}, RMSE={final_test_metrics['RMSE']:.6f}, R2={final_test_metrics['R2']:.4f}")
 
         # --- 新增: 为每个测试电池绘制可解释性曲线图 ---
         print("\n正在生成可解释性曲线图...")
