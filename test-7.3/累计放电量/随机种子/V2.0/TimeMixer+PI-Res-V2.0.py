@@ -70,10 +70,10 @@ class Config:
         self.batch_size = 128
         self.learning_rate = 0.001
         self.weight_decay = 0.0001
-        self.patience = 10
+        self.patience = 15
         self.seed = 2025
         self.mode = 'both'
-        self.task_weights = {"q": 1.0, "soh": 1000000.0}
+        self.task_weights = {"q": 1.0, "soh": 3200000}
 
         # --- 设备设置 ---
         self.use_gpu = True
@@ -456,6 +456,8 @@ def train_epoch(model, dataloader, optimizer, criterion, config):
             pred_q, pred_s = outputs
             loss_q   = criterion(pred_q, batch_y_q)
             loss_soh = criterion(pred_s, batch_y_s)
+            if torch.rand(1) < 0.01:  # 仅随机打印1%的批次，避免刷屏
+                print(f"\n[Raw Loss Check] Q_loss: {loss_q.item():.6f}, SOH_loss: {loss_soh.item():.6f}")
             loss_reg = getattr(model.cfg, "residual_l2", getattr(config, "residual_l2", 0.0)) * (aux.get("c_h", 0.0) ** 2).mean()
             loss = config.task_weights["q"] * loss_q + config.task_weights["soh"] * loss_soh + loss_reg
 
@@ -556,7 +558,7 @@ def plot_soh_results(labels, preds, title, save_path):
     plt.ylabel('SOH (State of Health)', fontsize=12)  # <--- 修改了Y轴
     plt.legend()
     plt.grid(True)
-    plt.ylim(min(0.7, np.min(labels) * 0.95), max(1.05, np.max(labels) * 1.05))  # SOH专用Y轴
+    plt.ylim(min(0.7, np.min(labels) * 0.95), max(1.0, np.max(labels) * 1.0))  # SOH专用Y轴
     plt.savefig(save_path, dpi=1200)
     plt.close()
 
