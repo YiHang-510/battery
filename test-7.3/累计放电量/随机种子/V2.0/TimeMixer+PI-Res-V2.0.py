@@ -26,23 +26,23 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0/TM_PIRes/4'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0/TM_PIRes/14'
 
         # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
         # self.val_batteries = [5, 11, 13, 19]
         # self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
 
-        self.train_batteries = [1, 2, 3, 6]
-        self.val_batteries = [5]
-        self.test_batteries = [4]
+        # self.train_batteries = [1, 2, 3, 6]
+        # self.val_batteries = [5]
+        # self.test_batteries = [4]
 
         # self.train_batteries = [7, 8, 9, 11]
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        # self.train_batteries = [15, 16, 17, 18]
-        # self.val_batteries = [13]
-        # self.test_batteries = [14]
+        self.train_batteries = [15, 16, 17, 18]
+        self.val_batteries = [13]
+        self.test_batteries = [14]
         #
         # self.train_batteries = [21, 22, 23, 24]
         # self.val_batteries = [19]
@@ -73,7 +73,7 @@ class Config:
         self.patience = 15
         self.seed = 2025
         self.mode = 'both'
-        self.task_weights = {"q": 1.0, "soh": 3200000}
+        self.task_weights = {"q": 1.0, "soh": 10000000}
 
         # --- 设备设置 ---
         self.use_gpu = True
@@ -250,48 +250,92 @@ class TMPIResConfig:
 
 
 class TM_PIRes(nn.Module):
-    def __init__(self, seq_channels: int, scalar_dim: int, cfg: TMPIResConfig):
+    def __init__(self, seq_channels: int, scalar_dim: int, cfg: TMPIResConfig, n_terms: int = 16):
         super().__init__()
         self.cfg = cfg
         d = cfg.d_model
 
-        # 原有组件保持不变...
-        self.soh_head = nn.Sequential(
-            nn.Linear(d, d), nn.ReLU(), nn.Dropout(cfg.dropout),
-            nn.Linear(d, 1)
-        )
+        # --- (1) 序列和标量特征的编码器 (不变) ---
         self.embed = nn.Linear(seq_channels, d)
         self.tm = TimeMixerStack(d, cfg.n_blocks, cfg.kernel_sizes, cfg.dropout)
         self.enc_s = nn.Sequential(
             nn.Linear(scalar_dim, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, d)
         )
+
+        # --- (2) Q 预测头 (不变) ---
         self.basis = ISplineBasis(cfg.n_basis, cfg.degree, cfg.n_grid)
         self.c0 = nn.Parameter(torch.randn(cfg.n_basis))
         self.b0 = nn.Parameter(torch.zeros(1))
         self.res_head = nn.Sequential(
             nn.Linear(d, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, cfg.n_basis)
         )
-        # 移除了 self.out_act = F.softplus
+
+        # --- (3) SOH 预测头 (替换) ---
+        # 移除旧的 MLP 头:
+        # self.soh_head = nn.Sequential(...)
+
+        # 增加新的 "ExpNet 参数预测头"
+        self.n_terms = n_terms
+        # 我们需要为 n_terms 组中的每一组预测 (a, b, d) 三个参数
+        self.soh_param_head = nn.Sequential(
+            nn.Linear(d, d),  # (可选) 增加一个中间层
+            nn.ReLU(),
+            nn.Linear(d, n_terms * 3)  # 最终输出 3 * n_terms 个参数
+        )
 
     def forward(self, v: torch.Tensor, s: torch.Tensor, t_norm: torch.Tensor) -> Tuple[torch.Tensor, dict]:
+        # --- (A) 特征提取 (不变) ---
         x = self.embed(v)
         H = self.tm(x)
         h_seq = H.mean(dim=1)
-        h = h_seq + self.enc_s(s)
+        h = h_seq + self.enc_s(s)  # h 是 [batch_size, d_model]
 
+        # --- (B) Q 预测 (不变) ---
         B_I = self.basis.eval(t_norm)
-
         c0_pos = F.softplus(self.c0)
-
-        # --- 修改点 1: 解除对 b0 的非负约束 ---
-        # 原代码: m = (B_I @ c0_pos) + F.softplus(self.b0)
-        m = (B_I @ c0_pos) + self.b0  # 新代码
-
+        m = (B_I @ c0_pos) + self.b0
         c_h = F.softplus(self.res_head(h))
         R = (B_I * c_h).sum(dim=-1)
+        Q = m + R
 
-        Q = m + R  # 累计放电容量 (Ah)，保持原先的物理先验结构
-        SOH_pred = torch.sigmoid(self.soh_head(h)).squeeze(-1)  # SOH∈[0,1]
+        # --- (C) SOH 预测 (全新) ---
+        # 1. 用 h 预测 (a, b, d) 参数
+        # params 的形状: [batch_size, n_terms * 3]
+        params = self.soh_param_head(h)
+
+        # 2. 将参数拆分
+        # a, b, d 的形状都是: [batch_size, n_terms]
+        a, b, d = torch.split(params, self.n_terms, dim=1)
+
+        # 3. 对参数施加约束 (非常重要!)
+        # a: 保证为正 (或 [0,1])，使用 sigmoid
+        a = torch.sigmoid(a)
+        # b: 保证为负 (衰减)，使用 -softplus
+        b = -F.softplus(b) - 1e-6  # 减去一个很小的数防止 b=0
+        # d: 保证为正，使用 softplus (或 sigmoid)
+        d = torch.sigmoid(d) * 0.5  # 假设 d 是一个小的正偏移
+
+        # 4. 计算 SOH
+        # t_norm 形状: [batch_size]
+        t = t_norm.view(-1, 1)  # 变形为 [batch_size, 1]
+
+        # 广播计算:
+        # a: [B, N]
+        # b: [B, N]
+        # t: [B, 1]
+        # b * t: [B, N] (广播)
+        # out_terms: [B, N]
+        out_terms = a * torch.exp(b * t) + d
+
+        # 5. 求和
+        # out_sum 形状: [B]
+        out_sum = out_terms.sum(dim=1)
+
+        # 6. (重要) 将最终结果压缩到 [0, 1]
+        # 你原来的 ExpNet 公式不保证输出在 [0,1]
+        # 我们可以复用原代码的 sigmoid 激活
+        SOH_pred = torch.sigmoid(out_sum)
+
         return (Q, SOH_pred), {"c_h": c_h}
 
 
