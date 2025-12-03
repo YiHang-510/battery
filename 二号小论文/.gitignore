@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Project-specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Deep Learning specific
+# Model files
+saved_models/
+*.pth
+*.h5
+*.ckpt
+*.pb
+*.onnx
+
+# Data files (usually too large for version control)
+data/raw/
+data/processed/
+*.csv
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Logs and outputs
+logs/
+runs/
+tensorboard/
+*.log
+
+# Weights & Biases
+wandb/
