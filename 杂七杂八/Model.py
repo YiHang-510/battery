@@ -1,0 +1,119 @@
+import torch
+import torch.nn as nn
+
+
+# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓多模态LSTM网络↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+
+class IMVTensorLSTM(torch.jit.ScriptModule):
+    __constants__ = ["n_units", "input_dim"]
+
+    def __init__(self, input_dim, output_dim, n_units, init_std=0.02):
+        super().__init__()
+        self.U_j = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
+        self.U_i = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
+        self.U_f = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
+        self.U_o = nn.Parameter(torch.randn(input_dim, 1, n_units) * init_std)
+        self.W_j = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
+        self.W_i = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
+        self.W_f = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
+        self.W_o = nn.Parameter(torch.randn(input_dim, n_units, n_units) * init_std)
+        self.b_j = nn.Parameter(torch.randn(input_dim, n_units) * init_std)
+        self.b_i = nn.Parameter(torch.randn(input_dim, n_units) * init_std)
+        self.b_f = nn.Parameter(torch.randn(input_dim, n_units) * init_std)
+        self.b_o = nn.Parameter(torch.randn(input_dim, n_units) * init_std)
+        self.F_alpha_n = nn.Parameter(torch.randn(input_dim, n_units, 1) * init_std)
+        self.F_alpha_n_b = nn.Parameter(torch.randn(input_dim, 1) * init_std)
+        self.F_beta = nn.Linear(2 * n_units, 1)
+        self.Phi = nn.Linear(2 * n_units, output_dim)
+        self.n_units = n_units
+        self.input_dim = input_dim
+
+    def forward(self, x):
+        h_tilda_t = torch.zeros(x.shape[0], self.input_dim, self.n_units).cuda()
+        c_tilda_t = torch.zeros(x.shape[0], self.input_dim, self.n_units).cuda()
+        outputs = torch.jit.annotate(List[Tensor], [])
+        for t in range(x.shape[1]):
+            # eq 1
+            j_tilda_t = torch.tanh(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_j) + \
+                                   torch.einsum("bij,jik->bjk", x[:, t, :].unsqueeze(1), self.U_j) + self.b_j)
+            # eq 5
+            i_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_i) + \
+                                      torch.einsum("bij,jik->bjk", x[:, t, :].unsqueeze(1), self.U_i) + self.b_i)
+            f_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_f) + \
+                                      torch.einsum("bij,jik->bjk", x[:, t, :].unsqueeze(1), self.U_f) + self.b_f)
+            o_tilda_t = torch.sigmoid(torch.einsum("bij,ijk->bik", h_tilda_t, self.W_o) + \
+                                      torch.einsum("bij,jik->bjk", x[:, t, :].unsqueeze(1), self.U_o) + self.b_o)
+            # eq 6
+            c_tilda_t = c_tilda_t * f_tilda_t + i_tilda_t * j_tilda_t
+            # eq 7
+            h_tilda_t = (o_tilda_t * torch.tanh(c_tilda_t))
+            outputs += [h_tilda_t]
+        outputs = torch.stack(outputs)
+        outputs = outputs.permute(1, 0, 2, 3)
+        # eq 8
+        alphas = torch.tanh(torch.einsum("btij,ijk->btik", outputs, self.F_alpha_n) + self.F_alpha_n_b)
+        alphas = torch.exp(alphas)
+        alphas = alphas / torch.sum(alphas, dim=1, keepdim=True)
+        g_n = torch.sum(alphas * outputs, dim=1)
+        hg = torch.cat([g_n, h_tilda_t], dim=2)
+        mu = self.Phi(hg)
+        betas = torch.tanh(self.F_beta(hg))
+        betas = torch.exp(betas)
+        betas = betas / torch.sum(betas, dim=1, keepdim=True)
+        mean = torch.sum(betas * mu, dim=1)
+
+        return mean, alphas, betas
+
+
+# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑多模态LSTM网络↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+
+# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+# ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓经验指数网络↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+
+class ExpNet(nn.Module):
+    def __init__(self, n_terms=16):
+        super(ExpNet, self).__init__()
+        # 每组都有a, b, d三个参数，共n_terms组
+        # 乘一个小负数防止梯度爆炸
+        self.b = nn.Parameter(torch.ones(n_terms) * -0.01)
+        self.a = nn.Parameter(torch.ones(n_terms) * 1.0)
+        self.d = nn.Parameter(torch.ones(n_terms))
+        self.n_terms = n_terms
+
+    def forward(self, c):
+        # c: [batch_size,] 或 [batch_size, 1]
+        c = c.view(-1, 1)      # [batch_size, 1]
+        a = self.a.view(1, -1) # [1, n_terms]
+        b = self.b.view(1, -1)
+        d = self.d.view(1, -1)
+        # 广播，计算每组参数的输出
+        out = a * torch.exp(b * c) + d  # [batch_size, n_terms]
+        # 你可以选择sum或mean，也可以直接输出所有组
+        out = out.sum(dim=1)            # [batch_size]
+        return out
+
+# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑经验指数网络↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+# ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+
+
+# #######卡尔曼滤波######
+class KalmanFusion:
+    def __init__(self, Q=1e-5, R=1e-2):
+        self.Q = Q  # 过程噪声协方差
+        self.R = R  # 观测噪声协方差
+        self.x = None  # 融合状态
+        self.P = 1  # 估计协方差
+
+    def update(self, z):
+        # z: list or np.array, 多个观测值
+        if self.x is None:
+            self.x = np.mean(z)
+        # 预测
+        self.P = self.P + self.Q
+        # 融合观测
+        K = self.P / (self.P + self.R)
+        self.x = self.x + K * (np.mean(z) - self.x)
+        self.P = (1 - K) * self.P
+        return self.x
