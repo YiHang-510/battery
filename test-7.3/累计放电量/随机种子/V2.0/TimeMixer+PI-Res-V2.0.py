@@ -26,7 +26,7 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0/TM_PIRes/14'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/TM_PIRes/vv'
 
         # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
         # self.val_batteries = [5, 11, 13, 19]
@@ -40,13 +40,30 @@ class Config:
         # self.val_batteries = [10]
         # self.test_batteries = [12]
 
-        self.train_batteries = [15, 16, 17, 18]
-        self.val_batteries = [13]
-        self.test_batteries = [14]
+        # self.train_batteries = [15, 16, 17, 18]
+        # self.val_batteries = [13]
+        # self.test_batteries = [14]
         #
         # self.train_batteries = [21, 22, 23, 24]
         # self.val_batteries = [19]
         # self.test_batteries = [20]
+        ################################################
+        # self.train_batteries = [1, 2, 9, 10]
+        # self.val_batteries = [17]
+        # self.test_batteries = [18]
+
+        # self.train_batteries = [3, 12, 19, 11]
+        # self.val_batteries = [20]
+        # self.test_batteries = [4]
+
+        # self.train_batteries = [13, 14, 21, 22]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
+
+        self.train_batteries = [16, 8, 15, 7]
+        self.val_batteries = [23]
+        self.test_batteries = [24]
+
 
         self.features_from_C = [
             '恒压充电时间(s)',
@@ -70,9 +87,10 @@ class Config:
         self.batch_size = 128
         self.learning_rate = 0.001
         self.weight_decay = 0.0001
-        self.patience = 15
+        self.patience = 10
         self.seed = 2025
-        self.mode = 'both'
+        # self.mode = 'both'
+        self.mode = 'validate'
         self.task_weights = {"q": 1.0, "soh": 10000000}
 
         # --- 设备设置 ---
@@ -774,6 +792,10 @@ def main():
                 'true_soh': test_labels_orig_s,
                 'pred_soh': test_preds_orig_s
             })
+
+            val_res_path = os.path.join(run_save_path, 'validation_results.csv')
+            eval_df.to_csv(val_res_path, index=False)
+            print(f"  >>> 详细预测结果已保存至: {val_res_path}")
 
             per_battery_metrics_list = []
             for batt_id in config.test_batteries:

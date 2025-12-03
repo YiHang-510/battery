@@ -28,7 +28,7 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
         # --- 修改: 更新保存路径以反映新模型 ---
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/CNN-LSTM-TPA/20'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/CNN-LSTM-TPA/vv'
 
         # self.train_batteries = [1, 2, 3, 6]
         # self.val_batteries = [5]
@@ -42,9 +42,29 @@ class Config:
         # self.val_batteries = [13]
         # self.test_batteries = [14]
 
-        self.train_batteries = [21, 22, 23, 24]
-        self.val_batteries = [19]
-        self.test_batteries = [20]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
+
+        self.train_batteries = [1, 2, 9, 10]
+        self.val_batteries = [18]
+        self.test_batteries = [17]
+
+        # self.train_batteries = [3, 12, 19, 11]
+        # self.val_batteries = [20]
+        # self.test_batteries = [4]
+
+        # self.train_batteries = [13, 14, 21, 22]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
+
+        # self.train_batteries = [7, 8, 23, 24]
+        # self.val_batteries = [15]
+        # self.test_batteries = [16]
+
+        # self.train_batteries = [16, 8, 15, 7]
+        # self.val_batteries = [23]
+        # self.test_batteries = [24]
 
         self.features_from_C = [
             '恒压充电时间(s)',
@@ -55,10 +75,10 @@ class Config:
         self.cap_norm = 3.5  # 最大容量的固定归一化系数
 
         # --- 模型超参数 (CNN-LSTM) ---
-        self.cnn_channels = 64
-        self.lstm_hidden = 128
-        self.lstm_layers = 2
-        self.dropout = 0.2
+        self.cnn_channels = 16
+        self.lstm_hidden = 64
+        self.lstm_layers = 1
+        self.dropout = 0.3
         self.out_activation = 'sigmoid' # 'sigmoid' or 'none'
 
         # --- 训练参数 ---

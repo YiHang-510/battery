@@ -53,7 +53,7 @@ class Model(nn.Module):
 
         # remove the cycle of the input data
         x = x - self.cycleQueue(cycle_index, self.seq_len)
-
+        print("小马眼在撸中，暂时不想射^-^")
         # forecasting with channel independence (parameters-sharing)
         y = self.model(x.permute(0, 2, 1)).permute(0, 2, 1)
 

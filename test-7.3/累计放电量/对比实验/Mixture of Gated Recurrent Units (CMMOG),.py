@@ -30,7 +30,7 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/MoE_Model/20'  # 建议为新模型创建一个新的保存路径
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/MoE_Model/vv'  # 建议为新模型创建一个新的保存路径
 
         # self.train_batteries = [1, 2, 3, 6]
         # self.val_batteries = [5]
@@ -44,9 +44,26 @@ class Config:
         # self.val_batteries = [13]
         # self.test_batteries = [14]
         #
-        self.train_batteries = [21, 22, 23, 24]
-        self.val_batteries = [19]
-        self.test_batteries = [20]
+        # self.train_batteries = [21, 22, 23, 24]
+        # self.val_batteries = [19]
+        # self.test_batteries = [20]
+
+
+        self.train_batteries = [1, 2, 9, 10]
+        self.val_batteries = [18]
+        self.test_batteries = [17]
+
+        # self.train_batteries = [3, 12, 19, 11]
+        # self.val_batteries = [20]
+        # self.test_batteries = [4]
+
+        # self.train_batteries = [13, 14, 21, 22]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
+
+        # self.train_batteries = [16, 8, 15, 7]
+        # self.val_batteries = [23]
+        # self.test_batteries = [24]
 
         self.features_from_C = [
             '恒压充电时间(s)',
@@ -59,7 +76,7 @@ class Config:
         # --- 训练参数 ---
         self.epochs = 500
         self.batch_size = 128
-        self.learning_rate = 0.001
+        self.learning_rate = 0.005
         self.weight_decay = 0.0001
         self.patience = 15  # MoE模型可能需要更多耐心
         self.seed = 2025

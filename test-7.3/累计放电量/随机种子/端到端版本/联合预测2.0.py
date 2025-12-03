@@ -41,12 +41,12 @@ class Config:
     # 路径（按需修改）
     path_A_sequence: str = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
     path_C_features: str  = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/all'
+    save_path: str        = '/home/scuee_user06/myh/电池/result-累计放电容量/result-dualnet2.0/Lwindow-monoExp/20'
 
     # # 数据集划分（按你的电池编号修改）
-    train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
-    val_batteries:   list = field(default_factory=lambda: [5, 10, 17, 19])
-    test_batteries:  list = field(default_factory=lambda: [6, 12, 16, 20])
+    # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4, 7, 8, 9, 11, 13, 14, 15, 18, 21, 22, 23, 24])
+    # val_batteries:   list = field(default_factory=lambda: [5, 10, 17, 19])
+    # test_batteries:  list = field(default_factory=lambda: [6, 12, 16, 20])
 
     # train_batteries: list = field(default_factory=lambda: [1, 2, 3, 4])
     # val_batteries:   list = field(default_factory=lambda: [5])
@@ -60,9 +60,9 @@ class Config:
     # val_batteries:   list = field(default_factory=lambda: [17])
     # test_batteries:  list = field(default_factory=lambda: [16])
     # #
-    # train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
-    # val_batteries:   list = field(default_factory=lambda: [19])
-    # test_batteries:  list = field(default_factory=lambda: [20])
+    train_batteries: list = field(default_factory=lambda: [21, 22, 23, 24])
+    val_batteries:   list = field(default_factory=lambda: [19])
+    test_batteries:  list = field(default_factory=lambda: [20])
 
     # 特征列（来自C路统计特征）
     features_from_C: list = field(default_factory=lambda: [
@@ -142,48 +142,148 @@ def set_seed(seed: int):
 # =============================
 # 3) 模型
 # =============================
-class RecurrentCycle(nn.Module):
-    def __init__(self, cycle_len, channel_size):
+# class RecurrentCycle(nn.Module):
+#     def __init__(self, cycle_len, channel_size):
+#         super().__init__()
+#         self.cycle_len = cycle_len
+#         self.data = nn.Parameter(torch.zeros(cycle_len, channel_size), requires_grad=True)
+#     def forward(self, index, length: int = 1):
+#         gather_index = (index.view(-1,1) + torch.arange(length, device=index.device).view(1,-1)) % self.cycle_len
+#         return self.data[gather_index]
+#
+# class EstimationModule(nn.Module):
+#     """输入: x_win(B, L, F), x_scalar(B,S), cycle(B,) → 输出: z_t, C_hat_t, x_hat_flat"""
+#     def __init__(self, cfg: Config):
+#         super().__init__()
+#         self.cfg = cfg
+#         in_seq = cfg.window_L * cfg.sequence_feature_dim  # L×F
+#         in_sca = len(cfg.features_from_C)
+#         self.sequence_encoder = nn.Linear(in_seq, cfg.d_model // 2)
+#         self.scalar_encoder   = nn.Linear(in_sca,  cfg.d_model // 2) if in_sca>0 else nn.Identity()
+#         self.cycle_queue = RecurrentCycle(cfg.meta_cycle_len, cfg.d_model) if cfg.use_cyclenet else None
+#         self.head_Ct = nn.Sequential(
+#             nn.Linear(cfg.d_model, cfg.d_ff), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(cfg.d_ff, 1)
+#         )
+#         self.head_nextseq = nn.Sequential(
+#             nn.Linear(cfg.d_model, cfg.d_ff), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(cfg.d_ff, in_seq)
+#         )
+#     def forward(self, x_win, x_scalar, cycle_number):
+#         B = x_win.size(0)
+#         x_seq_flat = x_win.view(B, -1)
+#         seq_emb = self.sequence_encoder(x_seq_flat)
+#         if isinstance(self.scalar_encoder, nn.Identity):
+#             sca_emb = torch.zeros(B, self.cfg.d_model//2, device=x_win.device)
+#         else:
+#             sca_emb = self.scalar_encoder(x_scalar)
+#         feat = torch.cat([seq_emb, sca_emb], dim=1)
+#         if self.cycle_queue is not None:
+#             cyc_idx = cycle_number % self.cfg.meta_cycle_len
+#             z_t = feat - self.cycle_queue(cyc_idx, length=1).squeeze(1)
+#         else:
+#             z_t = feat
+#         C_hat_t      = self.head_Ct(z_t)
+#         nextseq_flat = self.head_nextseq(z_t)
+#         return z_t, C_hat_t, nextseq_flat
+
+
+class BahdanauAttention(nn.Module):
+    def __init__(self, d_h, d_q, d_att):
         super().__init__()
-        self.cycle_len = cycle_len
-        self.data = nn.Parameter(torch.zeros(cycle_len, channel_size), requires_grad=True)
-    def forward(self, index, length: int = 1):
-        gather_index = (index.view(-1,1) + torch.arange(length, device=index.device).view(1,-1)) % self.cycle_len
-        return self.data[gather_index]
+        self.W_h = nn.Linear(d_h, d_att, bias=False)
+        self.W_q = nn.Linear(d_q, d_att, bias=False)
+        self.v   = nn.Linear(d_att, 1, bias=False)
+
+    def forward(self, H, q):
+        # H: (B, L, d_h), q: (B, d_q)
+        B, L, _ = H.size()
+        e = self.v(torch.tanh(self.W_h(H) + self.W_q(q).unsqueeze(1)))  # (B,L,1)
+        a = torch.softmax(e, dim=1)                                      # (B,L,1)
+        ctx = (a * H).sum(dim=1)                                         # (B,d_h)
+        return ctx, a.squeeze(-1)                                        # (B,L)
 
 class EstimationModule(nn.Module):
-    """输入: x_win(B, L, F), x_scalar(B,S), cycle(B,) → 输出: z_t, C_hat_t, x_hat_flat"""
-    def __init__(self, cfg: Config):
+    def __init__(self, in_feat_dim, sca_dim, L, d_model=256, lstm_h=128, lstm_layers=1,
+                 bidir=True, attn_dim=128, dropout=0.2,
+                 use_cyclenet=True, meta_cycle_len=100):
         super().__init__()
-        self.cfg = cfg
-        in_seq = cfg.window_L * cfg.sequence_feature_dim  # L×F
-        in_sca = len(cfg.features_from_C)
-        self.sequence_encoder = nn.Linear(in_seq, cfg.d_model // 2)
-        self.scalar_encoder   = nn.Linear(in_sca,  cfg.d_model // 2) if in_sca>0 else nn.Identity()
-        self.cycle_queue = RecurrentCycle(cfg.meta_cycle_len, cfg.d_model) if cfg.use_cyclenet else None
+        self.L = L
+        self.F = in_feat_dim
+        self.use_cyclenet = use_cyclenet
+        self.meta_cycle_len = meta_cycle_len
+
+        # 序列编码：LSTM -> 序列隐状态
+        self.lstm = nn.LSTM(input_size=in_feat_dim, hidden_size=lstm_h,
+                            num_layers=lstm_layers, batch_first=True,
+                            bidirectional=bidir, dropout=0.0 if lstm_layers==1 else dropout)
+        d_h = lstm_h * (2 if bidir else 1)
+
+        # 注意力：以“最后层、双向拼接”的最终隐状态作为查询
+        self.attn = BahdanauAttention(d_h=d_h, d_q=d_h, d_att=attn_dim)
+
+        # 标量分支
+        self.sca_enc = nn.Sequential(
+            nn.Linear(sca_dim if sca_dim>0 else 1, d_model//4),
+            nn.GELU(), nn.Dropout(dropout)
+        ) if sca_dim is not None else None
+
+        # 融合到统一表示 z_t
+        fuse_in = d_h + (d_model//4 if sca_dim and sca_dim>0 else 0)
+        self.fuse = nn.Sequential(
+            nn.Linear(fuse_in, d_model),
+            nn.GELU(), nn.Dropout(dropout),
+            nn.LayerNorm(d_model)
+        )
+
+        # 可学习周期嵌入（与原逻辑一致：做“减法”去周期）
+        if use_cyclenet:
+            self.cyc_embed = nn.Embedding(meta_cycle_len, d_model)
+
+        # 头部：Ct 回归 & 窗口重构（flatten）
         self.head_Ct = nn.Sequential(
-            nn.Linear(cfg.d_model, cfg.d_ff), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(cfg.d_ff, 1)
+            nn.Linear(d_model, d_model//2), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_model//2, 1)
         )
-        self.head_nextseq = nn.Sequential(
-            nn.Linear(cfg.d_model, cfg.d_ff), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(cfg.d_ff, in_seq)
+        self.head_recon = nn.Sequential(
+            nn.Linear(d_model, d_model), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_model, L * in_feat_dim)
         )
-    def forward(self, x_win, x_scalar, cycle_number):
-        B = x_win.size(0)
-        x_seq_flat = x_win.view(B, -1)
-        seq_emb = self.sequence_encoder(x_seq_flat)
-        if isinstance(self.scalar_encoder, nn.Identity):
-            sca_emb = torch.zeros(B, self.cfg.d_model//2, device=x_win.device)
+
+    def forward(self, x_win, x_sca=None, cycle_t=None):
+        """
+        x_win: (B,L,F) ；x_sca: (B,S) 或 None；cycle_t: (B,)
+        返回：z_t (B,d_model), C_hat_t (B,1), nextseq_flat (B,L*F)
+        """
+        B, L, F = x_win.size()
+        H, (hN, cN) = self.lstm(x_win)  # H:(B,L,d_h)
+
+        # --- START: FIX ---
+        # Correctly form the query 'q' for the attention mechanism.
+        if self.lstm.bidirectional:
+            # For a bidirectional LSTM, concatenate the final forward (hN[-2])
+            # and backward (hN[-1]) hidden states from the last layer.
+            q = torch.cat((hN[-2, :, :], hN[-1, :, :]), dim=1)
         else:
-            sca_emb = self.scalar_encoder(x_scalar)
-        feat = torch.cat([seq_emb, sca_emb], dim=1)
-        if self.cycle_queue is not None:
-            cyc_idx = cycle_number % self.cfg.meta_cycle_len
-            z_t = feat - self.cycle_queue(cyc_idx, length=1).squeeze(1)
+            # For a unidirectional LSTM, just use the last hidden state.
+            q = hN[-1, :, :]
+        # --- END: FIX ---
+
+        ctx, attn_w = self.attn(H, q)  # ctx:(B,d_h)
+
+        if (x_sca is not None) and (x_sca.size(-1) > 0):
+            sca_feat = self.sca_enc(x_sca)
+            feat = torch.cat([ctx, sca_feat], dim=-1)
         else:
-            z_t = feat
-        C_hat_t      = self.head_Ct(z_t)
-        nextseq_flat = self.head_nextseq(z_t)
-        return z_t, C_hat_t, nextseq_flat
+            feat = ctx
+
+        z = self.fuse(feat)  # (B,d_model)
+
+        if self.use_cyclenet and (cycle_t is not None):
+            cyc = self.cyc_embed(cycle_t % self.meta_cycle_len)  # (B,d_model)
+            z = z - cyc
+
+        C_hat_t = self.head_Ct(z)  # (B,1)
+        nextseq_flat = self.head_recon(z)  # (B,L*F)
+        return z, C_hat_t, nextseq_flat
 
 class ExpNetMono(nn.Module):
     """单调增量版：ΔC>=0；若给 q_t 则 ΔQ<=0。
@@ -644,7 +744,16 @@ def main():
     val_loader   = DataLoader(LWindowDataset(val_df,   cfg, has_Q), batch_size=cfg.batch_size, shuffle=False)
     test_loader  = DataLoader(LWindowDataset(test_df,  cfg, has_Q), batch_size=cfg.batch_size, shuffle=False)
 
-    E_net = EstimationModule(cfg).to(cfg.device)
+    # E_net = EstimationModule(cfg).to(cfg.device)
+    E_net = EstimationModule(
+        in_feat_dim=cfg.sequence_feature_dim,
+        sca_dim=len(cfg.features_from_C),
+        L=cfg.window_L,
+        d_model=cfg.d_model,
+        dropout=cfg.dropout,
+        use_cyclenet=cfg.use_cyclenet,
+        meta_cycle_len=cfg.meta_cycle_len
+    ).to(cfg.device)
     P_net = ExpNetMono(n_terms=cfg.exp_n_terms, out_dims=2 if has_Q else 1).to(cfg.device)
 
     opt_all = optim.Adam(list(E_net.parameters())+list(P_net.parameters()), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)

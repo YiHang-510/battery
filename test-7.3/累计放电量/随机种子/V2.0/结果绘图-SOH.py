@@ -19,21 +19,21 @@ mpl.rcParams.update({
 
 # 指向您的 validation_results.csv 文件
 csvs = {
-    "CCC-CCD": r"D:\任务归档\电池\研究\[二稿]小论文1号\RESULT\自己的实验\TM_PIRes\cc\validation_results.csv",
-    "CCC-VCD": r"D:\任务归档\电池\研究\[二稿]小论文1号\RESULT\自己的实验\TM_PIRes\cv\validation_results.csv",
-    "VCC-CCD": r"D:\任务归档\电池\研究\[二稿]小论文1号\RESULT\自己的实验\TM_PIRes\vc\validation_results.csv",
-    "VCC-VCD": r"D:\任务归档\电池\研究\[二稿]小论文1号\RESULT\自己的实验\TM_PIRes\vv\validation_results.csv",
+    "CCC-CCD": r"D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\cc\validation_results.csv",
+    "CCC-VCD": r"D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\cv\validation_results.csv",
+    "VCC-CCD": r"D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\vc\validation_results.csv",
+    "VCC-VCD": r"D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\vv\validation_results.csv",
 }
 
 # 图表标题字典
 titles = {
-    "CCC-CCD": "CCC-CCD",
-    "CCC-VCD": "CCC-VCD",
-    "VCC-CCD": "VCC-CCD",
-    "VCC-VCD": "VCC-VCD",
+    "CCC-CCD": "",
+    "CCC-VCD": "",
+    "VCC-CCD": "",
+    "VCC-VCD": "",
 }
 
-out_dir = r"D:\任务归档\电池\研究\[二稿]小论文1号\DOCUMENT\fig\Results"
+out_dir = r"D:\任务归档\电池\研究\二稿-小论文1号\DOCUMENT\fig\Results\SOH_estimation"
 os.makedirs(out_dir, exist_ok=True)
 
 # 颜色配置
