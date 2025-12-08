@@ -5,16 +5,9 @@
 """
 
 import numpy as np
-
-# 如果使用 PyTorch，取消下面的注释
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-
-# 如果使用 TensorFlow/Keras，取消下面的注释
-# import tensorflow as tf
-# from tensorflow import keras
-
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 class SimpleModel:
     """
