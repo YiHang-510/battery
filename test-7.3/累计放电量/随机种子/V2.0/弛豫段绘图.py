@@ -30,11 +30,10 @@ for i in range(20, 21):
         # 如果列名不同, 可以这样修改: pd.merge(df, capacity_df, left_on='df的循环列名', right_on='capacity_df的循环列名')
         df = pd.merge(df, capacity_df, on='循环号', how='left')
 
-
         # 验证必要的列是否存在 (增加了'最大容量(Ah)')
-        required_columns = ['循环号', '弛豫段电压', '最大容量(Ah)']
+        required_columns = ['循环号', '弛豫段电压', '最大容量(Ah)', '累计放电容量(Ah)']
         if not all(col in df.columns for col in required_columns):
-            print(f"错误：合并后的数据中必须包含 '循环号', '弛豫段电压', '最大容量(Ah)' 列。")
+            print(f"错误：合并后的数据中必须包含 '循环号', '弛豫段电压', '最大容量(Ah)', '累计放电容量(Ah)' 列。")
             print(f"当前列名: {df.columns.tolist()}")
             exit()
 
@@ -71,11 +70,10 @@ for i in range(20, 21):
     # 遍历每一个循环号
     for cycle_num in cycles:
         cycle_data = df[df['循环号'] == cycle_num]
-        x_axis_values = np.arange(len(cycle_data))
+        # 同一循环号下的横坐标改为对应的“累计放电容量(Ah)”，每个点沿该容量绘制
+        capacity_x = cycle_data['累计放电容量(Ah)'].iloc[0]
+        x_axis_values = np.full(len(cycle_data), capacity_x)
         y_axis_values = cycle_data['弛豫段电压']
-
-        time_step = 1  # 秒
-        x_axis_values = x_axis_values * time_step
 
         # --- ⭐ 修改: 使用新的 'color_value' 进行归一化以确定颜色 ---
         # (因为一个循环里所有行的这个值都一样,取第一个即可)
@@ -96,7 +94,7 @@ for i in range(20, 21):
     cbar.set_label('SOH', fontsize=14, rotation=270, labelpad=20) # 您可以自定义标签名称
 
     # 设置坐标轴标签和标题
-    ax.set_xlabel('Data point', fontsize=14) # 建议X轴标签改为时间
+    ax.set_xlabel('累计放电容量 (Ah)', fontsize=14)
     ax.set_ylabel('Relaxation voltage (V)', fontsize=14)
     ax.tick_params(axis='both', which='major', labelsize=12)
     # ax.grid(True, linestyle='--', alpha=0.6)

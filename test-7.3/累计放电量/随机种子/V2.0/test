@@ -1,0 +1,36 @@
+
+    #cc
+    csv_files = {
+        'M1': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MCNN_BiRNN_AM\cc\run_2\test_details_all_predictions.csv',
+        'M2': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MoE_Model\cc\run_3\test_details_all_predictions.csv',
+        'M3': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\RCMHCRE\cc\run_2\test_details_all_predictions.csv',
+        'M4': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\CNN-LSTM-TPA\cc\run_2\test_details_all_predictions.csv',
+        'M5': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\cc\validation_results.csv'
+    }
+    
+    # #cv
+    # csv_files = {
+    #     'M1': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MCNN_BiRNN_AM\cv\run_2\test_details_all_predictions.csv',
+    #     'M2': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MoE_Model\cv\run_3\test_details_all_predictions.csv',
+    #     'M3': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\RCMHCRE\cv\run_4\test_details_all_predictions.csv',
+    #     'M4': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\CNN-LSTM-TPA\cv\run_3\test_details_all_predictions.csv',
+    #     'M5': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\cv\validation_results.csv'
+    # }
+
+    # #vc
+    # csv_files = {
+    #     'M1': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MCNN_BiRNN_AM\vc\run_2\test_details_all_predictions.csv',
+    #     'M2': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MoE_Model\vc\run_5\test_details_all_predictions.csv',
+    #     'M3': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\RCMHCRE\vc\run_5\test_details_all_predictions.csv',
+    #     'M4': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\CNN-LSTM-TPA\vc\run_3\test_details_all_predictions.csv',
+    #     'M5': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\vc\validation_results.csv'
+    # }
+
+    # #vv
+    # csv_files = {
+    #     'M1': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MCNN_BiRNN_AM\vv\run_1\test_details_all_predictions.csv',
+    #     'M2': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\MoE_Model\vv\run_3\test_details_all_predictions.csv',
+    #     'M3': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\RCMHCRE\vv\run_1\test_details_all_predictions.csv',
+    #     'M4': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\对比实验-带预测真值\CNN-LSTM-TPA\vv\run_5\test_details_all_predictions.csv',
+    #     'M5': r'D:\任务归档\电池\研究\二稿-小论文1号\RESULT\自己的实验\TM_PIRes\vv\validation_results.csv'
+    # }

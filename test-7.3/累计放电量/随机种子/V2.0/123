@@ -1,0 +1,44 @@
+================================================================================
+                           JOINT TRAINING FRAMEWORK
+================================================================================
+
+ [  INPUTS  ]           [  ENCODER BACKBONE  ]             [  JOINT HEADS  ]
+                               (Shared)
+                                                                 +----------------+
+  Relaxation                                                   / | CDC Predictor  |
+   Voltage    ======>  [ TimeMixer Encoder ]                  /  | (Monotone)     |
+  (Sequence)                     |                           /   |                |--> Pred. Q_cdc
+                                 v                          /    +-------^--------+        |
+                           [ Fusion Layer ] ===============/             |                 |
+                                 |  h                      \     (Conditioned on t)        |
+  Scalar                         |                          \            |                 v
+  Features    ======>  [   MLP Encoder   ]                   \   +-------+--------+    (vs Real Q)
+   (Point)                       |                            \  | SOH Predictor  |        |
+                                 |                             \ | (Exponential)  |        |
+                                 v                              \|                |--> Pred. SOH
+                     (Internal Degradation Coordinate)           +-------^--------+        |
+                     +-------------------------------+                   |                 |
+                     |      Shared Life Axis t       |===================+                 v
+                     |          t ∈ (0,1)            |          (Controls Global       (vs Real SOH)
+                     +-------------------------------+           Aging Trend)              |
+                                 |                                                         |
+                                 | (Constraint)                                            |
+                                 v                                                         |
+                         [ L_life Loss ] ..................................................|
+                                 .                                                         |
+                                 .                                                         |
+                                 .               +==========================+              |
+                                 ................|  JOINT LOSS CALCULATION  |<.............|
+                                                 |      (Optimization)      |
+                                                 +==========================+
+                                                 | L_total =                |
+                                                 |  λ_Q * L_cdc  +          |
+                                                 |  λ_S * L_soh  +          |
+                                                 |  λ_life * L_life         |
+                                                 +============+=============+
+                                                              :
+                                                              :  <-- (Gradient Flow)
+                                                              :      BACKPROPAGATION
+                                                              :      Updates All Weights
+                                                              v
+                                                 [ To Encoders & Heads ]
