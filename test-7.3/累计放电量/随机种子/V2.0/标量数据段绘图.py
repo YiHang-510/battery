@@ -1,7 +1,12 @@
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib
+from matplotlib.legend_handler import HandlerBase
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
+import matplotlib.text as mtext
 
 # --- 设置全局字体为 Times New Roman ---
 plt.rcParams['font.family'] = 'serif'
@@ -22,6 +27,11 @@ def create_continuous_series(series):
     cumulative_offsets = values_before_reset.cumsum().fillna(0)
     offset_series = cumulative_offsets.reindex(series.index).ffill().fillna(0)
     return series + offset_series
+
+
+# Output directory for all generated figures (relative to this script)
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "figs")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 # --- 1. 加载和准备数据 ---
@@ -170,21 +180,122 @@ for bat in range(1,2):
             # 步骤 A: 单独保存图例
             # ==========================================
             # 1. 确保主图里不画图例 (保持注释状态)
-            # ax_current.legend(...)
+            MY_FONT_SIZE = 6.0      # 字体非常小
+            MY_HANDLE_LENGTH = 4.5  # <--- 关键修改！字体越小，这个倍数要越大。
+                                    # 原理：6pt * 4.5 = 27pt (宽度足够放下 "Y1")
+                                    # 如果是 16pt字体，这个值只需要 1.5
 
-            # 2. 创建一个新画布 (fig_legend)
-            fig_legend = plt.figure(figsize=(8, 0.5))
+            # 画布也必须非常小，否则图片会有巨大的白边
+            FIG_WIDTH = 3.5         
+            FIG_HEIGHT = 0.3        
 
-            # 3. 在新画布上画图例
-            fig_legend.legend(lines, labels, loc='center', ncol=4, frameon=False)
+            # ==========================================
+            # 1. 自定义 Handler (保持居中逻辑)
+            # ==========================================
+            class CenteredTextHandler(HandlerBase):
+                def __init__(self, text, color, fontsize):
+                    self.text = text
+                    self.color = color
+                    self.fontsize = fontsize
+                    super().__init__()
 
-            # 4. !!! 关键: 指定用 fig_legend 对象保存 !!!
-            fig_legend.savefig('legend_only.png', dpi=2000, bbox_inches='tight')
-            print("图例已单独保存为 'legend_only.png'")
+                def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
+                    # 强制使用我们指定的字号，不受外部干扰
+                    t = mtext.Text(
+                        x=width / 2, 
+                        y=height / 2 - ydescent,
+                        text=self.text,
+                        color=self.color,
+                        fontsize=self.fontsize, 
+                        ha='center', va='center', 
+                        fontfamily='Times New Roman'
+                    )
+                    return [t]
 
-            # 5. 关闭图例画布，释放内存，防止干扰
-            plt.close(fig_legend)
+            # ==========================================
+            # 2. 准备数据
+            # ==========================================
+            # 定义四种线条样式
+            line_styles = [
+                mlines.Line2D([], [], color='tab:blue', linestyle='dotted', linewidth=1.5),
+                mlines.Line2D([], [], color='tab:red', linestyle='solid', linewidth=1.5),
+                mlines.Line2D([], [], color='tab:purple', linestyle='dashed', linewidth=1.5),
+                mlines.Line2D([], [], color='tab:green', linestyle='solid', linewidth=1.5)
+            ]
 
+            labels_text = ["Current (A)", "Voltage (V)", "Charging Capacity (Ah)", "Discharging Capacity (Ah)"]
+            prefixes = ["Y1", "Y2", "Y3", "Y4"]
+            colors = ['tab:blue', 'tab:red', 'tab:purple', 'tab:green']
+
+            # ==========================================
+            # 3. 构造图例句柄
+            # ==========================================
+            final_handles = []
+            final_labels = []
+            handler_map = {}
+
+            for i in range(4):
+                # 第一行：线条
+                final_handles.append(line_styles[i])
+                final_labels.append(labels_text[i])
+                
+                # 第二行：文字图标
+                dummy = mpatches.Rectangle((0, 0), 1, 1, alpha=0)
+                
+                # 将字体大小传入 Handler
+                handler_map[dummy] = CenteredTextHandler(
+                    text=prefixes[i], 
+                    color=colors[i], 
+                    fontsize=MY_FONT_SIZE 
+                )
+                
+                final_handles.append(dummy)
+                final_labels.append(labels_text[i]) # 标签文字相同，保证对齐
+
+            # ==========================================
+            # 4. 绘图与保存
+            # ==========================================
+            # 强制重置字体配置，防止干扰
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['font.serif'] = ['Times New Roman']
+
+            fig = plt.figure(figsize=(FIG_WIDTH, FIG_HEIGHT))
+
+            leg = fig.legend(
+                final_handles, final_labels,
+                loc='center',
+                ncol=4,
+                frameon=False,
+                
+                # ⭐⭐⭐ 这里的 fontsize 控制右边的 "Current (A)"
+                fontsize=MY_FONT_SIZE, 
+                
+                handler_map=handler_map,
+                
+                # ⭐⭐⭐ 这里的 handlelength 控制左边图标的宽度
+                handlelength=MY_HANDLE_LENGTH, 
+                
+                # 其他微调
+                columnspacing=1.0,  # 列间距
+                handletextpad=0.4,  # 图标和文字的间距
+                labelspacing=0.1    # 行间距
+            )
+
+            # 再次给第二行文字上色
+            text_objs = leg.get_texts()
+            for i in range(4):
+                text_objs[2*i + 1].set_color(colors[i])
+
+            # 保存
+            save_dir = r'D:\任务归档\电池\研究\二稿-小论文1号\DOCUMENT\fig\scale_feature'
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, 'scale_feature_label.pdf')
+
+            # bbox_inches='tight' 会自动裁掉多余白边，确保无论画布多大，结果都紧凑
+            fig.savefig(save_path, dpi=600, bbox_inches='tight', pad_inches=0.02, transparent=True)
+
+            print(f"6号字体完美版已保存: {save_path}")
+            plt.close(fig)
             # ==========================================
             # 步骤 B: 保存主图 (不带图例)
             # ==========================================
@@ -214,14 +325,14 @@ for bat in range(1,2):
 
             # 保存 SVG
             fig.savefig(
-                "charge_curve.svg",
+                os.path.join(OUTPUT_DIR, "charge_curve.svg"),
                 format="svg",
                 transparent=True,
                 bbox_inches="tight",
                 pad_inches=0
             )
 
-            output_filename = f'b{bat}_cycle_100_plot_NoLegend.png'
+            output_filename = os.path.join(OUTPUT_DIR, f'b{bat}_cycle_100_plot_NoLegend.png')
 
             # 保存 PNG
             fig.savefig(

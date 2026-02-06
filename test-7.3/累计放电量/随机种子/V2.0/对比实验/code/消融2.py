@@ -21,33 +21,15 @@ import torch.nn.functional as F
 
 
 # --- 1. 配置参数 (已更新以适应新模型) ---
+# --- 1. 配置参数 ---
 class Config:
     def __init__(self):
-        # --- 数据和路径设置 ---
+        # ... (原有路径设置保持不变) ...
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/TM_PIRes/vv'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/TM_PIRes-消融-wo_scalars/vv'
 
-        # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
-        # self.val_batteries = [5, 11, 13, 19]
-        # self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
-
-        # self.train_batteries = [1, 2, 3, 6]
-        # self.val_batteries = [5]
-        # self.test_batteries = [4]
-
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
-
-        # self.train_batteries = [15, 16, 17, 18]
-        # self.val_batteries = [13]
-        # self.test_batteries = [14]
-        #
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
-        ################################################
+        # ... (原有电池划分保持不变) ...
         # self.train_batteries = [1, 2, 9, 10]
         # self.val_batteries = [17]
         # self.test_batteries = [18]
@@ -64,44 +46,47 @@ class Config:
         self.val_batteries = [23]
         self.test_batteries = [24]
 
-
+        # 原始连续标量特征
         self.features_from_C = [
             '恒压充电时间(s)',
             '3.3~3.6V充电时间(s)',
         ]
-        self.sequence_feature_dim = 7  # A文件的输入特征维度
-        self.sequence_length = 1  # 序列长度
+        self.sequence_feature_dim = 7  
+        self.sequence_length = 1
 
-        # --- 模型超参数 (TM_PIRes) ---
+        # === [新增] 消融实验配置 ===
+        # 可选: "full", "wo_tau336", "wo_scalars"
+        self.ablation_case = "wo_scalars"  
+        self.tau336_col_name = '3.3~3.6V充电时间(s)'
+        self.tau336_mask_col = 'mask_tau_3p3_3p6'
+        # =========================
+
+        # ... (其余参数 d_model, epochs 等保持不变) ...
         self.d_model = 128
         self.n_blocks = 3
         self.kernel_sizes = (3, 5, 7)
         self.dropout = 0.1
-        self.n_basis = 10  # I-spline 基函数数
-        self.degree = 3  # I-spline/B-spline 阶数
-        self.n_grid = 512  # I-spline 预计算网格
-        self.residual_l2 = 1e-3  # 残差系数 L2 正则
-
-        # --- 训练参数 ---
+        self.n_basis = 10
+        self.degree = 3
+        self.n_grid = 512
+        self.residual_l2 = 1e-3
+        
         self.epochs = 500
         self.batch_size = 128
         self.learning_rate = 0.001
         self.weight_decay = 0.0001
-        self.patience = 10
+        self.patience = 15
         self.seed = 2025
-        # self.mode = 'both'
-        self.mode = 'validate'
-        self.task_weights = {"q": 1.0, "soh": 10000000, "s": 10.0}
-
-        # --- 设备设置 ---
+        self.mode = 'both'
+        self.task_weights = {"q": 1.0, "soh": 10000000}
+        
         self.use_gpu = True
         self.device = torch.device("cuda" if self.use_gpu and torch.cuda.is_available() else "cpu")
-
-        # --- 时间(循环号)归一化 (min-max to [0,1]) ---
+        
         self.cycle_norm_min = None
         self.cycle_norm_max = None
 
-        # --- 辅助参数 ---
+        # 注意：self.scalar_feature_dim 将在 load_and_preprocess_data 中根据消融情况动态更新
         self.scalar_feature_dim = len(self.features_from_C)
 
 
@@ -267,31 +252,26 @@ class TMPIResConfig:
     residual_l2: float = 1e-4
 
 
-# ... (ISplineBasis, TimeMixerBlock 等保持不变) ...
-
 class TM_PIRes(nn.Module):
     def __init__(self, seq_channels: int, scalar_dim: int, cfg: TMPIResConfig, n_terms: int = 16):
         super().__init__()
         self.cfg = cfg
         d = cfg.d_model
 
-        # --- (1) 序列和标量特征的编码器 (不变) ---
+        # --- (1) 序列编码器 ---
         self.embed = nn.Linear(seq_channels, d)
         self.tm = TimeMixerStack(d, cfg.n_blocks, cfg.kernel_sizes, cfg.dropout)
-        self.enc_s = nn.Sequential(
-            nn.Linear(scalar_dim, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, d)
-        )
         
-        # --- 修改点 2: 新增“隐含寿命 s”估计器 ---
-        # 它可以是一个简单的 MLP，最后用 Sigmoid 保证 s 在 [0,1] 之间（与归一化循环号对应）
-        self.s_estimator = nn.Sequential(
-            nn.Linear(d, d // 2),
-            nn.GELU(),
-            nn.Linear(d // 2, 1),
-            nn.Sigmoid() 
-        )
+        # === [修改] 兼容 scalar_dim=0 ===
+        if scalar_dim > 0:
+            self.enc_s = nn.Sequential(
+                nn.Linear(scalar_dim, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, d)
+            )
+        else:
+            self.enc_s = None
+        # ==============================
 
-        # --- (2) Q 预测头 (不变) ---
+        # --- (2) Q 预测头 ---
         self.basis = ISplineBasis(cfg.n_basis, cfg.degree, cfg.n_grid)
         self.c0 = nn.Parameter(torch.randn(cfg.n_basis))
         self.b0 = nn.Parameter(torch.zeros(1))
@@ -299,7 +279,7 @@ class TM_PIRes(nn.Module):
             nn.Linear(d, d), nn.ReLU(), nn.Dropout(cfg.dropout), nn.Linear(d, cfg.n_basis)
         )
 
-        # --- (3) SOH 预测头 (不变) ---
+        # --- (3) SOH 预测头 ---
         self.n_terms = n_terms
         self.soh_param_head = nn.Sequential(
             nn.Linear(d, d),
@@ -307,50 +287,41 @@ class TM_PIRes(nn.Module):
             nn.Linear(d, n_terms * 3)
         )
 
-    # --- 修改点 3: forward 移除 t_norm 入参 ---
-    def forward(self, v: torch.Tensor, s_scalar: torch.Tensor) -> Tuple[torch.Tensor, dict]:
-        # 注意: 这里 s_scalar 指的是输入的标量特征 (x_scalar)，不是我们要预测的寿命 s
-        
-        # --- (A) 特征提取 (不变) ---
+    def forward(self, v: torch.Tensor, s: torch.Tensor, t_norm: torch.Tensor) -> Tuple[torch.Tensor, dict]:
+        # --- (A) 特征提取 ---
         x = self.embed(v)
         H = self.tm(x)
         h_seq = H.mean(dim=1)
-        h = h_seq + self.enc_s(s_scalar)  # h 是 [batch_size, d_model]
-
-        # --- (B) 关键修改: 从 h 预测隐含寿命 s_learned ---
-        s_learned = self.s_estimator(h).squeeze(-1) # [batch_size]
         
-        # 确保 s_learned 在 Basis 计算和 SOH 计算中使用
-        # 此时 s_learned 充当了原来的 t_norm
+        # === [修改] 仅当 encoder 存在时融合标量特征 ===
+        if self.enc_s is not None:
+            h = h_seq + self.enc_s(s)
+        else:
+            h = h_seq
+        # ===========================================
 
-        # --- (C) Q 预测 (使用 s_learned) ---
-        B_I = self.basis.eval(s_learned) # 传入模型自己学的 s
+        # --- (B) Q 预测 ---
+        B_I = self.basis.eval(t_norm)
         c0_pos = F.softplus(self.c0)
         m = (B_I @ c0_pos) + self.b0
         c_h = F.softplus(self.res_head(h))
         R = (B_I * c_h).sum(dim=-1)
         Q = m + R
 
-        # --- (D) SOH 预测 (使用 s_learned) ---
-        # 1. 预测参数
+        # --- (C) SOH 预测 ---
         params = self.soh_param_head(h)
-        a, b, d_param = torch.split(params, self.n_terms, dim=1) # 变量名微调防止混淆
+        a, b, d = torch.split(params, self.n_terms, dim=1)
 
-        # 3. 约束
         a = torch.sigmoid(a)
-        b = -F.softplus(b) - 1e-6 
-        d_param = torch.sigmoid(d_param) * 0.5
+        b = -F.softplus(b) - 1e-6
+        d = torch.sigmoid(d) * 0.5
 
-        # 4. 计算 SOH (使用 s_learned)
-        t_input = s_learned.view(-1, 1)  # 变形为 [batch_size, 1] 用于广播
-        out_terms = a * torch.exp(b * t_input) + d_param
-        
+        t = t_norm.view(-1, 1)
+        out_terms = a * torch.exp(b * t) + d
         out_sum = out_terms.sum(dim=1)
         SOH_pred = torch.sigmoid(out_sum)
 
-        # 返回 s_learned 以便计算 Loss
-        return (Q, SOH_pred), {"c_h": c_h, "s_learned": s_learned}
-
+        return (Q, SOH_pred), {"c_h": c_h}
 
 # --- 4. 数据集定义 (不变) ---
 class BatteryMultimodalDataset(Dataset):
@@ -362,7 +333,15 @@ class BatteryMultimodalDataset(Dataset):
         self.target_soh_col = target_soh_col
 
         self.sequences = np.array(self.df[self.sequence_col].tolist(), dtype=np.float32)
-        self.scalars   = self.df[self.scalar_cols].values.astype(np.float32)
+        
+        # === [修改] 兼容 scalar_cols 为空的情况 ===
+        if len(self.scalar_cols) == 0:
+            # 创建 shape=(N, 0) 的空数组
+            self.scalars = np.zeros((len(self.df), 0), dtype=np.float32)
+        else:
+            self.scalars = self.df[self.scalar_cols].values.astype(np.float32)
+        # ========================================
+            
         self.targets_q = self.df[self.target_q_col].values.astype(np.float32)
         self.targets_s = self.df[self.target_soh_col].values.astype(np.float32)
         self.cycle_indices = self.df['循环号'].values.astype(np.int64)
@@ -394,8 +373,6 @@ def load_and_preprocess_data(config):
             feature_cols = [f'弛豫段电压{i}' for i in range(1, config.sequence_feature_dim + 1)]
             sequence_df = df_a.groupby('循环号')[feature_cols].apply(lambda x: x.values).reset_index(
                 name='voltage_sequence')
-
-            # 筛选符合设定序列长度的数据
             sequence_df = sequence_df[sequence_df['voltage_sequence'].apply(len) == config.sequence_length]
 
             final_df = pd.merge(sequence_df, df_c, on='循环号')
@@ -413,18 +390,33 @@ def load_and_preprocess_data(config):
 
     full_df = pd.concat(all_battery_data, ignore_index=True)
 
-    # 依据每个电池首循环的最大容量构造 SOH∈(0,1]
+    # 依据每个电池首循环的最大容量构造 SOH
     full_df = full_df.sort_values(["battery_id", "循环号"])
     first_cap = full_df.groupby("battery_id")["最大容量(Ah)"].transform("first")
-    full_df["SOH"] = (full_df["最大容量(Ah)"] / first_cap).clip(lower=0.0, upper=1.0)  # 上限略放宽以容错
+    full_df["SOH"] = (full_df["最大容量(Ah)"] / first_cap).clip(lower=0.0, upper=1.0)
 
     target_q_col = '累计放电容量(Ah)'
     target_soh_col = 'SOH'
-    # target_col = '最大容量(Ah)' # <- 这行在您的代码中被注释了
     sequence_col = 'voltage_sequence'
-    scalar_feature_cols = config.features_from_C
+    
+    # === [核心修改] 缺失值处理与 Mask 生成 ===
+    # 1. 打印原始缺失率
+    if config.tau336_col_name in full_df.columns:
+        missing_count = full_df[config.tau336_col_name].isna().sum()
+        total_count = len(full_df)
+        print(f"Dataset Info: '{config.tau336_col_name}' missing ratio: {missing_count/total_count:.2%}")
+        
+        # 2. 生成 mask: 1=可用, 0=缺失
+        full_df[config.tau336_mask_col] = full_df[config.tau336_col_name].notna().astype(np.float32)
+        
+        # 3. 填充缺失值为 0.0 (为了保证 tensor 数值有效，物理上 mask=0 已屏蔽其意义)
+        full_df[config.tau336_col_name] = full_df[config.tau336_col_name].fillna(0.0)
+    else:
+        print(f"Warning: '{config.tau336_col_name}' not found, ablation logic might fail.")
+    # ========================================
 
-    for col in scalar_feature_cols:
+    # 验证特征存在性 (仅验证 Config 中定义的原始连续特征)
+    for col in config.features_from_C:
         if col not in full_df.columns:
             raise ValueError(f"您选择的特征 '{col}' 不存在于加载的数据中。")
 
@@ -432,40 +424,63 @@ def load_and_preprocess_data(config):
     val_df = full_df[full_df['battery_id'].isin(config.val_batteries)].copy()
     test_df = full_df[full_df['battery_id'].isin(config.test_batteries)].copy()
 
-    # --- 修改: 使用 Min-Max 归一化循环号 ---
+    # 循环号归一化
     config.cycle_norm_min = float(train_df['循环号'].min())
     config.cycle_norm_max = float(train_df['循环号'].max())
     if config.cycle_norm_max <= config.cycle_norm_min:
         config.cycle_norm_max = config.cycle_norm_min + 1.0
 
+    # === [核心修改] 仅对连续标量做 StandardScaler ===
     scaler_seq = StandardScaler()
-    scaler_scalar = StandardScaler()
-
-    # --- 关键错误修复 ---
-    # 下面两行已删除/注释，因为 target_col 未定义，且目标值Q和SOH未被归一化
-    # scaler_target = StandardScaler()
-    # scaler_target.fit(train_df[[target_col]]) # <- NameError: name 'target_col' is not defined
-    # --- 修复结束 ---
-
+    scaler_scalar = StandardScaler() # 仅用于连续特征
+    
+    continuous_cols = config.features_from_C  # ['恒压', '3.3-3.6']
+    
+    # Fit (仅连续特征)
     scaler_seq.fit(np.vstack(train_df[sequence_col].values))
-    scaler_scalar.fit(train_df[scalar_feature_cols])
+    scaler_scalar.fit(train_df[continuous_cols])
 
+    # Transform (仅连续特征)
     for df in [train_df, val_df, test_df]:
         df[sequence_col] = df[sequence_col].apply(lambda x: scaler_seq.transform(x))
-        df.loc[:, scalar_feature_cols] = scaler_scalar.transform(df[scalar_feature_cols])
-        # df.loc[:, [target_col]] = scaler_target.transform(df[[target_col]]) # <- 这行也需要注释掉
+        # 覆写原始列为归一化后的值
+        df.loc[:, continuous_cols] = scaler_scalar.transform(df[continuous_cols])
+    # ============================================
 
-    train_dataset = BatteryMultimodalDataset(train_df, sequence_col, scalar_feature_cols, target_q_col, target_soh_col)
-    val_dataset = BatteryMultimodalDataset(val_df, sequence_col, scalar_feature_cols, target_q_col, target_soh_col)
-    test_dataset = BatteryMultimodalDataset(test_df, sequence_col, scalar_feature_cols, target_q_col, target_soh_col)
+    # === [核心修改] 根据消融 Case 选择最终输入的 scalar_cols ===
+    if config.ablation_case == "full":
+        # 完整: [tau_CV, tau_336, mask]
+        used_scalar_cols = config.features_from_C + [config.tau336_mask_col]
+        
+    elif config.ablation_case == "wo_tau336":
+        # 去除 3.3-3.6: 仅 [tau_CV]
+        # 假设 tau_CV 是列表中的第一个，或者通过名字过滤
+        used_scalar_cols = [c for c in config.features_from_C if c != config.tau336_col_name]
+        
+    elif config.ablation_case == "wo_scalars":
+        # 去除所有标量: []
+        used_scalar_cols = []
+    else:
+        raise ValueError(f"Unknown ablation case: {config.ablation_case}")
+
+    print(f"Ablation Case: '{config.ablation_case}'")
+    print(f"Used Scalar Cols ({len(used_scalar_cols)}): {used_scalar_cols}")
+
+    # 动态更新 config 中的维度，以便模型初始化时使用正确维度
+    config.scalar_feature_dim = len(used_scalar_cols)
+    # ========================================================
+
+    train_dataset = BatteryMultimodalDataset(train_df, sequence_col, used_scalar_cols, target_q_col, target_soh_col)
+    val_dataset = BatteryMultimodalDataset(val_df, sequence_col, used_scalar_cols, target_q_col, target_soh_col)
+    test_dataset = BatteryMultimodalDataset(test_df, sequence_col, used_scalar_cols, target_q_col, target_soh_col)
 
     scalers = {
         'sequence': scaler_seq,
-        'scalar': scaler_scalar,
-        # 'target': scaler_target, # <- 建议也注释掉这一行
+        'scalar': scaler_scalar, # 注意：这只包含连续特征的 scaler
         'cycle_norm': {'min': config.cycle_norm_min, 'max': config.cycle_norm_max}
     }
     return train_dataset, val_dataset, test_dataset, scalers
+
 
 # --- 6. 训练函数 (已修改以适配新模型) ---
 def train_epoch(model, dataloader, optimizer, criterion, config):
@@ -502,35 +517,21 @@ def train_epoch(model, dataloader, optimizer, criterion, config):
         # 归一化循环号 -> t_norm ∈ [0,1]
         t_min  = torch.as_tensor(getattr(config, "cycle_norm_min", 0.0), device=config.device, dtype=torch.float32)
         t_max  = torch.as_tensor(getattr(config, "cycle_norm_max", 1.0), device=config.device, dtype=torch.float32)
-        # t_norm 现在是“真实标签”，不传给 model
-        t_norm_target = torch.clamp((batch_cycle_idx.float() - t_min) / (t_max - t_min + 1e-12), 0.0, 1.0)
+        t_norm = torch.clamp((batch_cycle_idx.float() - t_min) / (t_max - t_min + 1e-12), 0.0, 1.0)
 
         optimizer.zero_grad(set_to_none=True)
 
+        # --- 修复AMP逻辑 ---
+        # 统一使用 autocast 上下文
         with autocast(dtype=amp_dtype, enabled=use_amp):
-            # --- 修改点 4: 调用模型时不传 t_norm ---
-            (outputs, aux) = model(batch_seq, batch_scalar)
+            (outputs, aux) = model(batch_seq, batch_scalar, t_norm)
             pred_q, pred_s = outputs
-            
-            # --- 修改点 5: 获取预测的 s 并计算 Loss ---
-            s_learned = aux["s_learned"]
-            
             loss_q   = criterion(pred_q, batch_y_q)
             loss_soh = criterion(pred_s, batch_y_s)
-            
-            # 新增 s 的监督 Loss (MSE)
-            loss_s_align = criterion(s_learned, t_norm_target)
-            
+            if torch.rand(1) < 0.01:  # 仅随机打印1%的批次，避免刷屏
+                print(f"\n[Raw Loss Check] Q_loss: {loss_q.item():.6f}, SOH_loss: {loss_soh.item():.6f}")
             loss_reg = getattr(model.cfg, "residual_l2", getattr(config, "residual_l2", 0.0)) * (aux.get("c_h", 0.0) ** 2).mean()
-            
-            # 总 Loss
-            loss = (config.task_weights["q"] * loss_q + 
-                    config.task_weights["soh"] * loss_soh + 
-                    config.task_weights["s"] * loss_s_align +  # 加入 s loss
-                    loss_reg)
-            
-            if torch.rand(1) < 0.01:
-                print(f"\n[Loss] Q: {loss_q.item():.5f}, SOH: {loss_soh.item():.5f}, S_Align: {loss_s_align.item():.5f}")
+            loss = config.task_weights["q"] * loss_q + config.task_weights["soh"] * loss_soh + loss_reg
 
         if use_amp and device_type == 'cuda':
             # 仅在 CUDA AMP 时使用 scaler
@@ -541,6 +542,7 @@ def train_epoch(model, dataloader, optimizer, criterion, config):
             # 适用于: (1) 非AMP 训练 (2) CPU AMP 训练
             loss.backward()
             optimizer.step()
+        # --- 修复结束 ---
 
         total_loss += loss.item()
 
@@ -551,12 +553,7 @@ def train_epoch(model, dataloader, optimizer, criterion, config):
 def evaluate(model, dataloader, criterion, device, config):
     """
     验证 / 测试
-    返回：
-      avg_loss,
-      metrics_q(dict: Q_MSE/MAE/RMSE/R2),
-      metrics_s(dict: SOH_MSE/MAE/RMSE/R2),
-      q_preds(np.ndarray), q_labels(np.ndarray), cycle_indices(np.ndarray),
-      s_preds(np.ndarray), s_labels(np.ndarray)
+    (主体逻辑不变，仅在最后计算 metrics 时增加 MAPE 并调整顺序)
     """
     model.eval()
     total_loss = 0.0
@@ -576,24 +573,15 @@ def evaluate(model, dataloader, criterion, device, config):
             # t_norm
             t_min  = torch.as_tensor(getattr(config, "cycle_norm_min", 0.0), device=device, dtype=torch.float32)
             t_max  = torch.as_tensor(getattr(config, "cycle_norm_max", 1.0), device=device, dtype=torch.float32)
-            t_norm_target = torch.clamp((batch_cycle_idx.float() - t_min) / (t_max - t_min + 1e-12), 0.0, 1.0)
+            t_norm = torch.clamp((batch_cycle_idx.float() - t_min) / (t_max - t_min + 1e-12), 0.0, 1.0)
 
-            (outputs, aux) = model(batch_seq, batch_scalar)
+            (outputs, aux) = model(batch_seq, batch_scalar, t_norm)
             pred_q, pred_s = outputs
-            s_learned = aux["s_learned"]
 
             loss_q   = criterion(pred_q, batch_y_q)
             loss_soh = criterion(pred_s, batch_y_s)
-            loss_s_align = criterion(s_learned, t_norm_target) # 计算 s 的 loss
-            
             loss_reg = getattr(model.cfg, "residual_l2", getattr(config, "residual_l2", 0.0)) * (aux.get("c_h", 0.0) ** 2).mean()
-            
-            # 更新 Total Loss 计算
-            loss = (config.task_weights["q"] * loss_q + 
-                    config.task_weights["soh"] * loss_soh + 
-                    config.task_weights["s"] * loss_s_align + 
-                    loss_reg)
-            
+            loss = config.task_weights["q"] * loss_q + config.task_weights["soh"] * loss_soh + loss_reg
             total_loss += loss.item()
 
             all_q_preds.append(pred_q.detach().cpu().numpy());  all_q_labels.append(batch_y_q.detach().cpu().numpy())
@@ -607,19 +595,22 @@ def evaluate(model, dataloader, criterion, device, config):
     s_lbls  = np.concatenate(all_s_labels, axis=0).reshape(-1)
     cycle_indices = np.concatenate(all_cycle_indices, axis=0).reshape(-1)
 
-    # 指标
+    # === [修改] 增加 MAPE 并调整字典定义顺序 (尽管字典顺序不决定最终CSV顺序，但保持一致较好) ===
     metrics_q = {
-        "Q_MSE":  mean_squared_error(q_lbls, q_preds),
         "Q_MAE":  mean_absolute_error(q_lbls, q_preds),
+        "Q_MAPE": mean_absolute_percentage_error(q_lbls, q_preds), # 新增
+        "Q_MSE":  mean_squared_error(q_lbls, q_preds),
         "Q_RMSE": np.sqrt(mean_squared_error(q_lbls, q_preds)),
         "Q_R2":   r2_score(q_lbls, q_preds),
     }
     metrics_s = {
-        "SOH_MSE":  mean_squared_error(s_lbls, s_preds),
         "SOH_MAE":  mean_absolute_error(s_lbls, s_preds),
+        "SOH_MAPE": mean_absolute_percentage_error(s_lbls, s_preds), # 新增
+        "SOH_MSE":  mean_squared_error(s_lbls, s_preds),
         "SOH_RMSE": np.sqrt(mean_squared_error(s_lbls, s_preds)),
         "SOH_R2":   r2_score(s_lbls, s_preds),
     }
+    # ===================================================================================
 
     avg_loss = total_loss / max(1, len(dataloader))
     return avg_loss, metrics_q, metrics_s, q_preds, q_lbls, cycle_indices, s_preds, s_lbls
@@ -810,10 +801,6 @@ def main():
                 'pred_soh': test_preds_orig_s
             })
 
-            val_res_path = os.path.join(run_save_path, 'validation_results.csv')
-            eval_df.to_csv(val_res_path, index=False)
-            print(f"  >>> 详细预测结果已保存至: {val_res_path}")
-
             per_battery_metrics_list = []
             for batt_id in config.test_batteries:
                 batt_df = eval_df[eval_df['battery_id'] == batt_id]
@@ -876,6 +863,11 @@ def main():
             # 直接使用 evaluate 返回的指标字典
             final_test_metrics = {**test_metrics_q, **test_metrics_s}
 
+            ordered_metrics = [
+                'Q_MAE', 'Q_MAPE', 'Q_MSE', 'Q_RMSE', 'Q_R2',
+                'SOH_MAE', 'SOH_MAPE', 'SOH_MSE', 'SOH_RMSE', 'SOH_R2'
+            ]
+
             pd.DataFrame([final_test_metrics]).to_csv(os.path.join(run_save_path, 'test_overall_metrics.csv'),
                                                       index=False)
             all_runs_metrics.append({'run': run_number, 'seed': current_seed, **final_test_metrics})
@@ -891,6 +883,11 @@ def main():
         print(f"\n\n{'=' * 50}\n 所有实验均已完成。\n{'=' * 50}")
         if all_runs_metrics:
             summary_df = pd.DataFrame(all_runs_metrics)
+            # === [修改] 保存五次实验汇总时，也强制列顺序 ===
+            summary_cols = ['run', 'seed'] + ordered_metrics
+            # 确保列存在
+            summary_cols = [c for c in summary_cols if c in summary_df.columns]
+            summary_df = summary_df[summary_cols]
             summary_path = os.path.join(config.save_path, 'all_runs_summary.csv')
             summary_df.to_csv(summary_path, index=False)
             print("\n--- 五次实验性能汇总 ---\n", summary_df)
@@ -908,9 +905,7 @@ def main():
 
             # --- 修改 7: 更新 all_runs_PER_BATTERY_metrics 的列排序 ---
             # 确保所有 Q 和 SOH 指标都被包含
-            core_cols = ['Battery_ID', 'run', 'seed',
-                         'Q_MAE', 'Q_MAPE', 'Q_MSE', 'Q_RMSE', 'Q_R2',
-                         'SOH_MAE', 'SOH_MAPE', 'SOH_MSE', 'SOH_RMSE', 'SOH_R2']
+            core_cols = ['Battery_ID', 'run', 'seed'] + ordered_metrics
 
             ordered_cols = [col for col in core_cols if col in per_batt_summary_df.columns] + [col for col in
                                                                                                per_batt_summary_df.columns

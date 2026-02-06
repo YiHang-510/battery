@@ -28,23 +28,7 @@ class Config:
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
         # --- 修改: 更新保存路径以反映新模型 ---
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/CNN-LSTM-TPA/vv'
-
-        # self.train_batteries = [1, 2, 3, 6]
-        # self.val_batteries = [5]
-        # self.test_batteries = [4]
-        #
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
-
-        # self.train_batteries = [15, 16, 17, 18]
-        # self.val_batteries = [13]
-        # self.test_batteries = [14]
-
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/CNN-LSTM-TPA/cc'
 
         self.train_batteries = [1, 2, 9, 10]
         self.val_batteries = [18]
@@ -57,10 +41,6 @@ class Config:
         # self.train_batteries = [13, 14, 21, 22]
         # self.val_batteries = [5]
         # self.test_batteries = [6]
-
-        # self.train_batteries = [7, 8, 23, 24]
-        # self.val_batteries = [15]
-        # self.test_batteries = [16]
 
         # self.train_batteries = [16, 8, 15, 7]
         # self.val_batteries = [23]
@@ -75,9 +55,16 @@ class Config:
         self.cap_norm = 3.5  # 最大容量的固定归一化系数
 
         # --- 模型超参数 (CNN-LSTM) ---
-        self.cnn_channels = 16
-        self.lstm_hidden = 64
-        self.lstm_layers = 1
+        # self.cnn_channels = 16
+        # self.lstm_hidden = 64
+        # self.lstm_layers = 1
+        self.cnn_channels = 64  # 修改为 64
+
+        # 原代码: self.lstm_hidden = 64
+        self.lstm_hidden = 128  # 修改为 128
+
+        # 原代码: self.lstm_layers = 1
+        self.lstm_layers = 2    # 修改为 2 (因为报错里出现了 l1 层权重)
         self.dropout = 0.3
         self.out_activation = 'sigmoid' # 'sigmoid' or 'none'
 
@@ -88,7 +75,8 @@ class Config:
         self.weight_decay = 0.0001
         self.patience = 10
         self.seed = 2025
-        self.mode = 'both'
+        # self.mode = 'both'
+        self.mode = 'validate'
 
         # --- 设备设置 ---
         self.use_gpu = True
@@ -512,6 +500,9 @@ def main():
 
             print("\n--- 本轮评估结果 (按单电池) ---")
             eval_df = pd.DataFrame({'battery_id': test_dataset.df['battery_id'].values, 'cycle': test_cycle_nums, 'true': test_labels_orig, 'pred': test_preds_orig})
+            details_save_path = os.path.join(run_save_path, 'test_details_all_predictions.csv')
+            eval_df.to_csv(details_save_path, index=False)
+            print(f"已保存详细预测对比数据至: {details_save_path}")
             per_battery_metrics_list = []
             for batt_id in sorted(list(set(config.test_batteries))):
                 batt_df = eval_df[eval_df['battery_id'] == batt_id]

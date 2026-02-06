@@ -90,17 +90,17 @@ def save_one_small_fig(title, savename, x, real, est, true_soh, color,
     ax1.plot(x, real, ls='none', marker='o', ms=2, color=c_real, label='Real ADC', alpha=1)
     ax1.plot(x, est, ls='none', marker='D', ms=2, color=color, label='Estimated ADC', alpha=1)
 
-    ax1.set_xlabel("True Cumulative Discharge Capacity (Ah)", fontsize=10)
-    ax1.set_ylabel("Predicted CDC (Ah)", fontsize=10)
-    ax1.set_title(title, fontsize=11, pad=4)
-    ax1.tick_params(labelsize=10)
+    ax1.set_xlabel("True Cumulative Discharge Capacity (Ah)", fontsize=16)
+    ax1.set_ylabel("Predicted CDC (Ah)", fontsize=16)
+    ax1.set_title(title, fontsize=17, pad=4)
+    ax1.tick_params(labelsize=16)
 
     ax1.set_ylim(limit_min_y, limit_max_y)
     ax1.yaxis.set_major_locator(MaxNLocator(nbins=5))
     ax1.grid(True, ls='--', lw=0.5, alpha=0.5)
 
     # [修改 1] 图例位置改为右下角
-    ax1.legend(loc="lower right", fontsize=9, frameon=True, handletextpad=0.2, borderpad=0.3)
+    ax1.legend(loc="lower right", fontsize=12, frameon=True, handletextpad=0.2, borderpad=0.3)
 
     # ----------------------
     # 内嵌图 (Inset Plot)

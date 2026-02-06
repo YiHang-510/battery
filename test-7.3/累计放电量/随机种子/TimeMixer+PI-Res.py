@@ -26,27 +26,27 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/TM_PIRes/4'
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量/TM_PIRes/vv'
 
         # self.train_batteries = [1, 2, 3, 4, 7, 8, 9, 10, 15, 16, 17, 18, 21, 22, 23, 24]
         # self.val_batteries = [5, 11, 13, 19]
         # self.test_batteries = [6, 12, 14, 20]  # 假设这些文件存在
 
-        self.train_batteries = [1, 2, 3, 6]
-        self.val_batteries = [5]
-        self.test_batteries = [4]
+        # self.train_batteries = [1, 2, 9, 10]
+        # self.val_batteries = [17]
+        # self.test_batteries = [18]
 
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
+        # self.train_batteries = [3, 12, 19, 11]
+        # self.val_batteries = [20]
+        # self.test_batteries = [4]
 
-        # self.train_batteries = [15, 16, 17, 18]
-        # self.val_batteries = [13]
-        # self.test_batteries = [14]
-        #
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
+        # self.train_batteries = [13, 14, 21, 22]
+        # self.val_batteries = [5]
+        # self.test_batteries = [6]
+
+        self.train_batteries = [16, 8, 15, 7]
+        self.val_batteries = [23]
+        self.test_batteries = [24]
 
         self.features_from_C = [
             '恒压充电时间(s)',

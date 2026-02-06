@@ -33,22 +33,6 @@ class Config:
         # --- 修改: 更新保存路径以反映新模型 ---
         self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/RCMHCRE/cc'
 
-        # self.train_batteries = [1, 2, 3, 6]
-        # self.val_batteries = [5]
-        # self.test_batteries = [4]
-        #
-        # self.train_batteries = [7, 8, 9, 11]
-        # self.val_batteries = [10]
-        # self.test_batteries = [12]
-
-        # self.train_batteries = [15, 16, 17, 18]
-        # self.val_batteries = [13]
-        # self.test_batteries = [14]
-
-        # self.train_batteries = [21, 22, 23, 24]
-        # self.val_batteries = [19]
-        # self.test_batteries = [20]
-
         self.train_batteries = [1, 2, 9, 10]
         self.val_batteries = [18]
         self.test_batteries = [17]
@@ -89,7 +73,8 @@ class Config:
         self.weight_decay = 0.0001
         self.patience = 15
         self.seed = 2025
-        self.mode = 'both'
+        # self.mode = 'both'
+        self.mode = 'validate'
 
         # --- 设备设置 ---
         self.use_gpu = True
@@ -621,6 +606,9 @@ def main():
             eval_df = pd.DataFrame(
                 {'battery_id': test_dataset.df['battery_id'].values, 'cycle': test_cycle_nums, 'true': test_labels_orig,
                  'pred': test_preds_orig})
+            details_save_path = os.path.join(run_save_path, 'test_details_all_predictions.csv')
+            eval_df.to_csv(details_save_path, index=False)
+            print(f"已保存详细预测对比数据至: {details_save_path}")
             per_battery_metrics_list = []
             for batt_id in sorted(list(set(config.test_batteries))):
                 batt_df = eval_df[eval_df['battery_id'] == batt_id]

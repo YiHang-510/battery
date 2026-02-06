@@ -89,17 +89,17 @@ def save_one_small_fig(title, savename, x, real, est, color,
     ax1.plot(x, real, ls='none', marker='o', ms=1.2, color=c_real, label='Real SOH', alpha=1)
     ax1.plot(x, est, ls='none', marker='D', ms=1.2, color=color, label='Estimated SOH', alpha=1)
 
-    ax1.set_xlabel("True Cumulative Discharge Capacity (Ah)", fontsize=10)
-    ax1.set_ylabel("Predicted SOH", fontsize=10)
-    ax1.set_title(title, fontsize=11, pad=4)
-    ax1.tick_params(labelsize=10)
+    ax1.set_xlabel("True CDC (Ah)", fontsize=18)
+    ax1.set_ylabel("Predicted SOH", fontsize=18)
+    ax1.set_title(title, fontsize=17, pad=4)
+    ax1.tick_params(labelsize=16)
 
     ax1.set_ylim(limit_min_y, limit_max_y)
     ax1.yaxis.set_major_locator(MaxNLocator(nbins=5))
     ax1.grid(True, ls='--', lw=0.5, alpha=0.5)
 
     # [核心修改 1] 图例位置改为左下角 (lower left)
-    ax1.legend(loc="upper right", fontsize=9, frameon=True, handletextpad=0.2, borderpad=0.3)
+    ax1.legend(loc="upper right", fontsize=15, frameon=True, handletextpad=0.2, borderpad=0.3)
 
     # ----------------------
     # 内嵌图 (Inset Plot)
@@ -108,7 +108,7 @@ def save_one_small_fig(title, savename, x, real, est, color,
     # [核心修改 2] 内嵌图位置改为右上角
     # 坐标格式: [left, bottom, width, height] (相对于主图的比例 0-1)
     # 右上角位置建议: left 约 0.60, bottom 约 0.55
-    ax_inset = fig.add_axes([0.11, 0.17, 0.38, 0.38])
+    ax_inset = fig.add_axes([0.175, 0.225, 0.34, 0.34])
 
     # 内嵌图范围计算
     data_min_inset = min(real.min(), est.min())
@@ -125,8 +125,8 @@ def save_one_small_fig(title, savename, x, real, est, color,
     # 3. [修改] 内嵌图标签
     # ax_inset.set_xlabel("Real SOH", fontsize=8)
     # ax_inset.set_ylabel("Est. SOH", fontsize=8)
-    ax_inset.tick_params(axis='x', direction='in', pad=-12, labelsize=7)
-    ax_inset.tick_params(labelsize=7)
+    ax_inset.tick_params(axis='x', direction='in', pad=-12, labelsize=14)
+    ax_inset.tick_params(labelsize=14)
     
     ax_inset.yaxis.tick_right()  # 将刻度移动到右侧
     ax_inset.yaxis.set_label_position("right")  # 将标签移动到右侧

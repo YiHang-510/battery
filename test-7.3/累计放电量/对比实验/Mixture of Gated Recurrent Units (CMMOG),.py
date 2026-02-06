@@ -30,7 +30,7 @@ class Config:
         # --- 数据和路径设置 ---
         self.path_A_sequence = r'/home/scuee_user06/myh/电池/data/selected_feature/relaxation/Interval-singleraw-200x'
         self.path_C_features = r'/home/scuee_user06/myh/电池/data/selected_feature/statistic'
-        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/MoE_Model/vv'  # 建议为新模型创建一个新的保存路径
+        self.save_path = '/home/scuee_user06/myh/电池/result-累计放电容量V2.0_correct/MoE_Model/cc'  # 建议为新模型创建一个新的保存路径
 
         # self.train_batteries = [1, 2, 3, 6]
         # self.val_batteries = [5]
@@ -80,7 +80,8 @@ class Config:
         self.weight_decay = 0.0001
         self.patience = 15  # MoE模型可能需要更多耐心
         self.seed = 2025
-        self.mode = 'both'
+        # self.mode = 'both'
+        self.mode = 'validate'
         self.dropout = 0.2
 
         # --- 设备设置 ---
@@ -587,6 +588,9 @@ def main():
             eval_df = pd.DataFrame(
                 {'battery_id': test_dataset.df['battery_id'].values, 'cycle': test_cycle_nums, 'true': test_labels_orig,
                  'pred': test_preds_orig})
+            details_save_path = os.path.join(run_save_path, 'test_details_all_predictions.csv')
+            eval_df.to_csv(details_save_path, index=False)
+            print(f"已保存详细预测对比数据至: {details_save_path}")
             per_battery_metrics_list = []
             for batt_id in config.test_batteries:
                 batt_df = eval_df[eval_df['battery_id'] == batt_id]
